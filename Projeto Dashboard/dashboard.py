@@ -8,15 +8,15 @@ pd.set_option('display.width', 1000)
 # Caminho do arquivo
 arquivo = "2025 - Dashboard Piticas Planaltina-DF.xlsx"
 
-# Lê a planilha pulando as 3 primeiras linhas
+# Lê a planilha pulando as 3 primeiras linhas que não contêm dados
 df = pd.read_excel(arquivo, sheet_name="Entrada e Saída (R$)", skiprows=3)
 
-# Converte datas e remove linhas sem data (como totais mensais)
+# Converte datas e remove linhas sem data
 df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
 df = df[df['Data'].notna()]
 df.fillna(0, inplace=True)
 
-# Colunas de entrada (pagamentos reais)
+# Colunas de entrada por forma de pagamento
 colunas_entrada_real = [
     'Dinheiro', 'PIX',
     'Master', 'Visa', 'Elo',
@@ -42,8 +42,7 @@ df['Total_Credito_3x'] = df[['Master.3', 'Visa.3', 'Elo.3', 'AmEx.2', 'Diners.2'
 df['Total_Credito'] = df[['Total_Credito_1x', 'Total_Credito_2x', 'Total_Credito_3x']].sum(axis=1)
 
 # =====================
-# 📅 TOTAL POR DIA (10 primeiras linhas)
-# =====================
+# 📅 TOTAL POR DIA
 total_dia_formatado = df[['Data', 'Total_Dinheiro', 'Total_PIX', 'Total_Debito',
                           'Total_Credito_1x', 'Total_Credito_2x', 'Total_Credito_3x',
                           'Total_Credito', 'Total_do_Dia']].copy().head(10)
@@ -85,7 +84,7 @@ display(HTML("<h3 style='font-size:20px; font-weight:bold;'>📊 Entrada Mensal 
 display(total_mensal_formatado)
 
 # =====================
-# 📋 TOTAIS GERAIS (Acumulado)
+# 📋 TOTAIS DE ENTRADA
 # =====================
 colunas_totais = [
     'Total_Dinheiro', 'Total_PIX', 'Total_Debito',
