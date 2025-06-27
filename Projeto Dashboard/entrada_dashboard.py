@@ -1,15 +1,15 @@
 import pandas as pd
-from IPython.display import display
+from IPython.display import display, HTML
 
 # Exibe todas as colunas e ajusta largura
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', 1000)
 
-# Caminho do arquivo
-arquivo = "2025 - Dashboard Piticas Planaltina-DF.xlsx"
+# Caminho do arquivo CSV
+arquivo = "data/entrada_tratada.csv"
 
-# Lê a planilha pulando as 3 primeiras linhas que não contêm dados
-df = pd.read_excel(arquivo, sheet_name="Entrada e Saída (R$)", skiprows=3)
+# Lê o arquivo CSV tratado
+df = pd.read_csv(arquivo)
 
 # Converte datas e remove linhas sem data
 df['Data'] = pd.to_datetime(df['Data'], errors='coerce')
@@ -110,3 +110,6 @@ totais_gerais_df['Total Geral de Entradas'] = [
 
 display(HTML("<h3 style='font-size:20px; font-weight:bold;'>📋 Total de Entrada </h3>"))
 display(totais_gerais_df)
+
+# Salva o DataFrame formatado em um arquivo CSV
+df.to_csv("data/entrada_dashboard.csv", index=False)
