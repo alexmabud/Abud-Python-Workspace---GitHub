@@ -5,3 +5,6 @@
 
 # Ignorar todos os arquivos CSV da pasta data/
 data/*.csv
+
+Projeto Dashboard/data/*.csv
+*.csv
