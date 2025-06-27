@@ -2,3 +2,6 @@
 
 /data/*.csv
 /data/*.xlsx
+
+# Ignorar todos os arquivos CSV da pasta data/
+data/*.csv
