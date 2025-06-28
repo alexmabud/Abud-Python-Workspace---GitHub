@@ -1,5 +1,0 @@
-# Ignorar todos os arquivos da pasta 'data'
-data/*
-
-# Mas manter a pasta vazia (se quiser que o VS Code mostre)
-!data/.gitkeep
