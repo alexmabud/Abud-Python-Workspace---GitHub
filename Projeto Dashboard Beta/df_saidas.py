@@ -27,4 +27,4 @@ colunas_ordenadas = [
 df_saidas = df_saidas[colunas_ordenadas]
 
 # Exibe as primeiras linhas do DataFrame
-print(df_saidas.head(50))
+print(df_saidas.head())
