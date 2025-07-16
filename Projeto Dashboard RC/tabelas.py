@@ -3,7 +3,7 @@ import pandas as pd
 import sqlite3
 import os
 
-# === CSS personalizado ===
+# === CSS personalizado ===========================================================================================
 st.markdown("""
     <style>
     [data-testid="stSidebar"] {
@@ -28,11 +28,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# === Caminho do banco de dados ===
+# === Caminho do banco de dados ======================================================================================
 caminho_data = r'C:\\Users\\User\\OneDrive\\Documentos\\Python\\Dev_Python\\Abud Python Workspace - GitHub\\Projeto Dashboard RC\\data'
 caminho_banco = os.path.join(caminho_data, 'dashboard_rc.db')
 
-# === Função para carregar tabela ===
+# === Função para carregar tabela ====================================================================================
 def carregar_tabela(nome_tabela):
     try:
         with sqlite3.connect(caminho_banco) as conn:
@@ -41,33 +41,89 @@ def carregar_tabela(nome_tabela):
         st.error(f"Erro ao carregar tabela '{nome_tabela}': {e}")
         return pd.DataFrame()
 
-# === SIDEBAR ===
-st.sidebar.markdown("## 📂 Navegação")
+# === SIDEBAR ========================================================================================================
+st.sidebar.markdown("## Selecione uma opção:")
 
+# Inicializa estados padrão se não existirem
 st.session_state.setdefault("mostrar_entradas", False)
 st.session_state.setdefault("mostrar_saidas", False)
+st.session_state.setdefault("mostrar_lancamentos_do_dia", False)
 st.session_state.setdefault("mes_selecionado", 1)
 st.session_state.setdefault("mes_saida_selecionado", 1)
 
-if st.sidebar.button("📥 Ver Entradas"):
-    st.session_state.mostrar_entradas = True
-    st.session_state.mostrar_saidas = False
+# Controle da página principal
+opcao = st.sidebar.radio("Opções:", [
+    "📊 Dashboard",
+    "📉 DRE",
+    "🧾 Lançamentos",
+    "🛠️ Cadastro"
+])
 
-if st.sidebar.button("📤 Ver Saídas"):
+# Resetar visões ao trocar de página
+if opcao != "🧾 Lançamentos":
     st.session_state.mostrar_entradas = False
-    st.session_state.mostrar_saidas = True
+    st.session_state.mostrar_saidas = False
+    st.session_state.mostrar_lancamentos_do_dia = False
 
-# === Nome dos meses ===
+# Submenu da seção Dashboard
+if opcao == "📊 Dashboard":
+    st.markdown("### 📊 Dashboard\nEm desenvolvimento...")
+
+# Submenu da seção DRE
+elif opcao == "📉 DRE":
+    st.markdown("### 📉 DRE\nEm desenvolvimento...")
+
+# Submenu da seção Lançamentos
+elif opcao == "🧾 Lançamentos":
+    st.markdown("### 🔽 Lançamentos\nSelecione uma opção no canto esquerdo em Lançamentos para visualizar.")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔽 Lançamentos")
+
+    if st.sidebar.button("📅 Lançamentos do Dia"):
+        st.session_state.mostrar_lancamentos_do_dia = True
+        st.session_state.mostrar_entradas = False
+        st.session_state.mostrar_saidas = False
+        st.session_state.mostrar_mercadorias = False
+
+    if st.sidebar.button("📥 Ver Entradas"):
+        st.session_state.mostrar_lancamentos_do_dia = False
+        st.session_state.mostrar_entradas = True
+        st.session_state.mostrar_saidas = False
+        st.session_state.mostrar_mercadorias = False
+
+    if st.sidebar.button("📤 Ver Saídas"):
+        st.session_state.mostrar_lancamentos_do_dia = False
+        st.session_state.mostrar_entradas = False
+        st.session_state.mostrar_saidas = True
+        st.session_state.mostrar_mercadorias = False
+
+    if st.sidebar.button("📦 Ver Mercadorias"):
+        st.session_state.mostrar_lancamentos_do_dia = False
+        st.session_state.mostrar_entradas = False
+        st.session_state.mostrar_saidas = False
+        st.session_state.mostrar_mercadorias = True
+
+   
+# Submenu da seção Cadastro
+elif opcao == "🛠️ Cadastro":
+    st.markdown("### 🛠️ Cadastro\nEm desenvolvimento...")
+
+# === Nome dos meses ==========================================================================================
 nome_meses = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
     5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
 }
 
-# === TÍTULO PRINCIPAL ===
-st.title("📋 Visualização de Tabelas")
+# === TÍTULO PRINCIPAL =========================================================================================
+st.title("")
 
-# === PÁGINA DE ENTRADAS ===
+ # == LANCAMENTOS DO DIA =========================================================================================
+if st.session_state.get("mostrar_lancamentos_do_dia", False):
+    st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
+
+
+# === PÁGINA DE ENTRADAS ========================================================================================
 if st.session_state.mostrar_entradas:
     df = carregar_tabela("entrada")
     st.subheader("📥 Tabela de Entradas")
@@ -137,7 +193,7 @@ if st.session_state.mostrar_entradas:
         df_detalhado = df_detalhado.drop(columns=["Ano"])
     st.dataframe(df_detalhado, use_container_width=True, hide_index=True)
 
-# === PÁGINA DE SAÍDAS ===
+# === PÁGINA DE SAÍDAS =============================================================================================
 elif st.session_state.mostrar_saidas:
     df = carregar_tabela("saida")
     st.subheader("📤 Tabela de Saídas")
@@ -210,3 +266,5 @@ elif st.session_state.mostrar_saidas:
     if "Ano" in df_detalhado.columns:
         df_detalhado = df_detalhado.drop(columns=["Ano"])
     st.dataframe(df_detalhado, use_container_width=True, hide_index=True)
+
+    # === PÁGINA DE MERCADORIAS ========================================================================================
