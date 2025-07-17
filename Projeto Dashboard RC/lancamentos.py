@@ -59,6 +59,9 @@ def limpar_todas_as_paginas():
     st.session_state.mostrar_saidas = False
     st.session_state.mostrar_lancamentos_do_dia = False
     st.session_state.mostrar_mercadorias = False
+    st.session_state.mostrar_cartao_credito = False
+    st.session_state.mostrar_emprestimos_financiamentos = False
+    
 
 # === Nome dos meses ================================================================================================
 nome_meses = {
@@ -116,6 +119,14 @@ elif opcao == "🧾 Lançamentos":
         limpar_todas_as_paginas()
         st.session_state.mostrar_mercadorias = True
 
+    if st.sidebar.button("Ver Cartão de Crédito"):
+        limpar_todas_as_paginas()
+        st.session_state.mostrar_cartao_credito = True
+
+    if st.sidebar.button("Emprestimos e Financiamentos"):
+        limpar_todas_as_paginas()
+        st.session_state.mostrar_emprestimos_financiamentos = True
+        
  # == LANCAMENTOS DO DIA =========================================================================================
 if st.session_state.get("mostrar_lancamentos_do_dia", False):
     st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
@@ -344,3 +355,11 @@ elif st.session_state.get("mostrar_mercadorias", False):
             st.warning("Nenhum registro encontrado para o mês selecionado.")
     else:
         st.warning("Não foi possível carregar a tabela de mercadorias.")
+
+# === PÁGINA DE CARTÃO DE CRÉDITO ===================================================================================
+elif st.session_state.get("mostrar_cartao_credito", False):
+    st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
+
+# === PÁGINA DE EMPRÉSTIMOS E FINANCIAMENTOS ========================================================================
+elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
+    st.markdown("### Emprestimos/Financiamentos\nEm desenvolvimento...")
