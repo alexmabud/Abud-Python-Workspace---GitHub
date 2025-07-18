@@ -1,23 +1,11 @@
 import sqlite3
-import pandas as pd
 import os
 
-# === Caminho dos arquivos CSV ===
+# === Caminho da pasta e banco de dados ===
 caminho_data = r'C:\Users\User\OneDrive\Documentos\Python\Dev_Python\Abud Python Workspace - GitHub\Projeto Dashboard RC\data'
-
-# === Carregar os arquivos CSV ===
-df_entradas = pd.read_csv(os.path.join(caminho_data, 'entradas.csv'))
-df_saidas = pd.read_csv(os.path.join(caminho_data, 'saidas.csv'))
-df_mercadorias = pd.read_csv(os.path.join(caminho_data, 'mercadorias.csv'))
-
-# === Renomear colunas da tabela saida (caso venham com espaços)
-df_saidas.columns = [
-    "Data", "Valor", "Forma_de_Pagamento", "Parcelas",
-    "Categoria", "Sub_Categoria", "Descricao"
-]
-
-# === Criar (ou substituir) o banco de dados SQLite ===
 caminho_banco = os.path.join(caminho_data, 'dashboard_rc.db')
+
+# === Conectar (ou criar) o banco de dados SQLite ===
 conn = sqlite3.connect(caminho_banco)
 cursor = conn.cursor()
 
@@ -67,13 +55,50 @@ CREATE TABLE IF NOT EXISTS mercadorias (
 )
 ''')
 
-# === Inserir os dados nas tabelas (substituindo os antigos) ===
-df_entradas.to_sql('entrada', conn, if_exists='replace', index=False)
-df_saidas.to_sql('saida', conn, if_exists='replace', index=False)
-df_mercadorias.to_sql('mercadorias', conn, if_exists='replace', index=False)
+# === Criar tabela de taxas das máquinas de cartão ===
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS taxas_maquinas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    forma_pagamento TEXT NOT NULL,  -- 'débito' ou 'crédito'
+    bandeira TEXT NOT NULL,
+    parcelas INTEGER,               -- NULL para débito, 1 a 12 para crédito
+    taxa_percentual REAL NOT NULL
+)
+""")
 
-# === Finalizar e fechar ===
+# === Criar tabela de contas a pagar ===
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS contas_a_pagar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    data_compra DATE NOT NULL,
+    descricao TEXT NOT NULL,
+    valor REAL NOT NULL,
+    tipo_pagamento TEXT NOT NULL,
+    parcelas INTEGER,
+    vencimento DATE NOT NULL,
+    categoria TEXT,
+    subcategoria TEXT,
+    numero_pedido TEXT,
+    numero_nf TEXT,
+    pago BOOLEAN DEFAULT 0,
+    data_pagamento DATE
+)
+""")
+
+# === Criar tabela de usuários do sistema ===
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS usuarios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    email TEXT,
+    senha TEXT,
+    perfil TEXT DEFAULT 'admin', -- 'admin', 'funcionario', etc.
+    ativo BOOLEAN DEFAULT 1
+)
+""")
+
+# === Finalizar e fechar conexão ===
 conn.commit()
 conn.close()
 
-print("✅ Banco de dados criado com sucesso com todas as colunas corretas!")
+print("✅ Banco de dados verificado com sucesso! Todas as tabelas estão criadas e nenhum dado foi apagado.")
