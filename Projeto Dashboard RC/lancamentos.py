@@ -61,6 +61,7 @@ def limpar_todas_as_paginas():
     st.session_state.mostrar_mercadorias = False
     st.session_state.mostrar_cartao_credito = False
     st.session_state.mostrar_emprestimos_financiamentos = False
+    st.session_state.mostrar_contas_pagar = False
     
 
 # === Nome dos meses ================================================================================================
@@ -82,8 +83,19 @@ opcao = st.sidebar.radio("Opções:", [
 ])
 
 # === Resetar visões ao trocar de página principal (fora de lançamentos) ============================================
+if opcao != "📊 Dashboard":
+    limpar_todas_as_paginas()
+
+if opcao != "📉 DRE":
+    limpar_todas_as_paginas()
+
 if opcao != "🧾 Lançamentos":
     limpar_todas_as_paginas()
+
+if opcao != "🛠️ Cadastro":
+    limpar_todas_as_paginas()
+
+
 
 # === Submenu da seção Dashboard =====================================================================================
 if opcao == "📊 Dashboard":
@@ -92,10 +104,6 @@ if opcao == "📊 Dashboard":
 # === Submenu da seção DRE ==========================================================================================
 elif opcao == "📉 DRE":
     st.markdown("### 📉 DRE\nEm desenvolvimento...")
-
-# === Submenu da seção Cadastro ======================================================================================
-elif opcao == "🛠️ Cadastro":
-    st.markdown("### 🛠️ Cadastro\nEm desenvolvimento...")
 
 # === Submenu da seção Lançamentos ==================================================================================
 elif opcao == "🧾 Lançamentos":
@@ -118,6 +126,10 @@ elif opcao == "🧾 Lançamentos":
     if st.sidebar.button("📦 Ver Mercadorias"):
         limpar_todas_as_paginas()
         st.session_state.mostrar_mercadorias = True
+
+    if st.sidebar.button("Ver Contas a Pagar"):
+        limpar_todas_as_paginas()
+        st.session_state.mostrar_contas_pagar = True
 
     if st.sidebar.button("Ver Cartão de Crédito"):
         limpar_todas_as_paginas()
@@ -356,6 +368,10 @@ elif st.session_state.get("mostrar_mercadorias", False):
     else:
         st.warning("Não foi possível carregar a tabela de mercadorias.")
 
+# === PÁGINA DE CONTAS A PAGAR ===================================================================================
+elif st.session_state.get("mostrar_contas_pagar", False):
+    st.markdown("### Conatas a Pagar\nEm desenvolvimento...")
+
 # === PÁGINA DE CARTÃO DE CRÉDITO ===================================================================================
 elif st.session_state.get("mostrar_cartao_credito", False):
     st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
@@ -363,3 +379,7 @@ elif st.session_state.get("mostrar_cartao_credito", False):
 # === PÁGINA DE EMPRÉSTIMOS E FINANCIAMENTOS ========================================================================
 elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
     st.markdown("### Emprestimos/Financiamentos\nEm desenvolvimento...")
+
+# === Submenu da seção Cadastro ======================================================================================
+elif opcao == "🛠️ Cadastro":
+    st.markdown("### 🛠️ Cadastro\nEm desenvolvimento...")
