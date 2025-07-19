@@ -3,7 +3,7 @@ import pandas as pd
 import sqlite3
 import os
 
-# === CSS personalizado ===========================================================================================
+# === CSS personalizado ============================================================================================
 st.markdown("""
     <style>
     [data-testid="stSidebar"] {
@@ -41,18 +41,6 @@ def carregar_tabela(nome_tabela):
         st.error(f"Erro ao carregar tabela '{nome_tabela}': {e}")
         return pd.DataFrame()
 
-# === SIDEBAR ========================================================================================================
-st.sidebar.markdown("## Selecione uma opção:")
-
-# Inicializa estados padrão se não existirem
-st.session_state.setdefault("mostrar_entradas", False)
-st.session_state.setdefault("mostrar_saidas", False)
-st.session_state.setdefault("mostrar_lancamentos_do_dia", False)
-st.session_state.setdefault("mostrar_mercadorias", False)
-st.session_state.setdefault("mes_selecionado", 1)
-st.session_state.setdefault("mes_saida_selecionado", 1)
-st.session_state.setdefault("mes_mercadoria", 1)
-
 # === Função para limpar todas as páginas =============================================================================
 def limpar_todas_as_paginas():
     st.session_state.mostrar_entradas = False
@@ -62,7 +50,19 @@ def limpar_todas_as_paginas():
     st.session_state.mostrar_cartao_credito = False
     st.session_state.mostrar_emprestimos_financiamentos = False
     st.session_state.mostrar_contas_pagar = False
-    
+    st.session_state.mostrar_taxas_maquinas = False
+
+# === Inicializa estados padrão =======================================================================================
+st.session_state.setdefault("mostrar_entradas", False)
+st.session_state.setdefault("mostrar_saidas", False)
+st.session_state.setdefault("mostrar_lancamentos_do_dia", False)
+st.session_state.setdefault("mostrar_mercadorias", False)
+st.session_state.setdefault("mostrar_cartao_credito", False)
+st.session_state.setdefault("mostrar_emprestimos_financiamentos", False)
+st.session_state.setdefault("mostrar_contas_pagar", False)
+st.session_state.setdefault("mes_selecionado", 1)
+st.session_state.setdefault("mes_saida_selecionado", 1)
+st.session_state.setdefault("mes_mercadoria", 1)
 
 # === Nome dos meses ================================================================================================
 nome_meses = {
@@ -71,10 +71,16 @@ nome_meses = {
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
 }
 
+# === SIDEBAR ========================================================================================================
+st.sidebar.markdown("## Selecione uma opção:")
+
 # === TÍTULO PRINCIPAL ===============================================================================================
 st.title("")
 
 # === Controle da página principal ===================================================================================
+if "pagina_atual" not in st.session_state:
+    st.session_state["pagina_atual"] = None
+
 opcao = st.sidebar.radio("Opções:", [
     "📊 Dashboard",
     "📉 DRE",
@@ -82,20 +88,10 @@ opcao = st.sidebar.radio("Opções:", [
     "🛠️ Cadastro"
 ])
 
-# === Resetar visões ao trocar de página principal (fora de lançamentos) ============================================
-if opcao != "📊 Dashboard":
+# Se mudou a página, limpa todas as visões e salva a nova opção
+if st.session_state["pagina_atual"] != opcao:
     limpar_todas_as_paginas()
-
-if opcao != "📉 DRE":
-    limpar_todas_as_paginas()
-
-if opcao != "🧾 Lançamentos":
-    limpar_todas_as_paginas()
-
-if opcao != "🛠️ Cadastro":
-    limpar_todas_as_paginas()
-
-
+    st.session_state["pagina_atual"] = opcao
 
 # === Submenu da seção Dashboard =====================================================================================
 if opcao == "📊 Dashboard":
@@ -107,7 +103,7 @@ elif opcao == "📉 DRE":
 
 # === Submenu da seção Lançamentos ==================================================================================
 elif opcao == "🧾 Lançamentos":
-    st.markdown("### 🔽 Lançamentos\nSelecione uma opção no canto esquerdo em Lançamentos que desjea visualizar.")
+    st.markdown("### 🔽 Lançamentos\nSelecione uma opção no canto esquerdo em Lançamentos que deseja visualizar.")
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔽 Lançamentos")
 
@@ -138,10 +134,74 @@ elif opcao == "🧾 Lançamentos":
     if st.sidebar.button("Emprestimos e Financiamentos"):
         limpar_todas_as_paginas()
         st.session_state.mostrar_emprestimos_financiamentos = True
-        
- # == LANCAMENTOS DO DIA =========================================================================================
-if st.session_state.get("mostrar_lancamentos_do_dia", False):
-    st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
+
+# === Submenu da seção Cadastro ======================================================================================
+elif opcao == "🛠️ Cadastro":
+    st.markdown("### 🔽 Cadastro\nSelecione uma opção no canto esquerdo em Cadastro que deseja visualizar.")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔽 Cadastro")
+
+    if st.sidebar.button("Taxas de Máquinas"):
+        limpar_todas_as_paginas()
+        st.session_state.mostrar_taxas_maquinas = True
+
+# === Página de Cadastro de Taxas de Máquinas =======================================================================
+if st.session_state.get("mostrar_taxas_maquinas", False):
+    st.markdown("### 🛠️ Cadastro de Taxas das Máquinas de Cartão")
+
+    with st.form("form_taxas_maquinas"):
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            forma_pagamento = st.selectbox("Forma de Pagamento", ["Débito", "Crédito"], index=1, key="forma_pgto")
+
+        # Define opções de bandeira conforme a forma de pagamento
+        if forma_pagamento == "Débito":
+            opcoes_bandeiras = ["Visa", "Master", "Elo"]
+        else:
+            opcoes_bandeiras = ["Visa", "Master", "Elo", "Amex", "DinersClub"]
+
+        with col2:
+            bandeira = st.selectbox("Bandeira", opcoes_bandeiras, key="bandeira_cartao")
+
+        with col3:
+            if forma_pagamento == "Débito":
+                st.markdown("Parcelas")
+                st.markdown("🔒 Não se aplica para Débito.")
+                parcelas = 1
+            else:
+                parcelas = st.selectbox("Parcelas", list(range(1, 13)), index=1, key="parcelas_cartao")
+
+        with col4:
+            taxa = st.number_input("Taxa (%)", min_value=0.0, format="%.2f", step=0.01, key="taxa_input")
+
+        submitted = st.form_submit_button("Salvar")
+
+        if submitted:
+            with sqlite3.connect(caminho_banco) as conn:
+                conn.execute("""
+                    INSERT INTO taxas_maquinas (forma_pagamento, bandeira, parcelas, taxa_percentual)
+                    VALUES (?, ?, ?, ?)
+                """, (forma_pagamento.upper(), bandeira.upper(), parcelas, taxa))
+                st.success("✅ Cadastro salvo com sucesso!")
+
+    # Mostrar cadastros já existentes
+    with sqlite3.connect(caminho_banco) as conn:
+        df_taxas = pd.read_sql("""
+            SELECT forma_pagamento AS 'Forma de Pagamento', 
+                   bandeira AS 'Bandeira', 
+                   parcelas AS 'Parcelas', 
+                   taxa_percentual AS 'Taxa (%)'
+            FROM taxas_maquinas
+            ORDER BY forma_pagamento, bandeira, parcelas
+        """, conn)
+
+    if not df_taxas.empty:
+        df_taxas["Taxa (%)"] = df_taxas["Taxa (%)"].apply(lambda x: f"{x:.2f}%")
+        st.markdown("### 📋 Taxas Cadastradas:")
+        st.dataframe(df_taxas, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum cadastro encontrado.")
 
 
 # === PÁGINA DE ENTRADAS ========================================================================================
@@ -380,6 +440,3 @@ elif st.session_state.get("mostrar_cartao_credito", False):
 elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
     st.markdown("### Emprestimos/Financiamentos\nEm desenvolvimento...")
 
-# === Submenu da seção Cadastro ======================================================================================
-elif opcao == "🛠️ Cadastro":
-    st.markdown("### 🛠️ Cadastro\nEm desenvolvimento...")
