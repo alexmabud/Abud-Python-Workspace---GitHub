@@ -41,6 +41,47 @@ def carregar_tabela(nome_tabela):
         st.error(f"Erro ao carregar tabela '{nome_tabela}': {e}")
         return pd.DataFrame()
 
+# === Criação da tabela de usuários se não existir ==================================================================
+with sqlite3.connect(caminho_banco) as conn:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            senha TEXT NOT NULL,
+            perfil TEXT NOT NULL,
+            ativo INTEGER NOT NULL
+        )
+    """)
+
+# === LOGIN DO USUÁRIO ===============================================================================================
+if "usuario_logado" not in st.session_state:
+    st.session_state.usuario_logado = None
+
+if not st.session_state.usuario_logado:
+    st.markdown("## 🔐 Login")
+    with st.form("login_form"):
+        email_login = st.text_input("Email")
+        senha_login = st.text_input("Senha", type="password")
+        login_submitted = st.form_submit_button("Entrar")
+
+        if login_submitted:
+            with sqlite3.connect(caminho_banco) as conn:
+                cursor = conn.execute("SELECT nome, perfil FROM usuarios WHERE email = ? AND senha = ? AND ativo = 1", (email_login, senha_login))
+                usuario = cursor.fetchone()
+
+            if usuario:
+                st.session_state.usuario_logado = {
+                    "nome": usuario[0],
+                    "perfil": usuario[1]
+                }
+                st.success(f"✅ Bem-vindo, {usuario[0]}!")
+                st.rerun()
+            else:
+                st.error("❌ Usuário ou senha inválidos, ou usuário inativo.")
+
+    st.stop()
+    
 # === Função para limpar todas as páginas =============================================================================
 def limpar_todas_as_paginas():
     st.session_state.mostrar_entradas = False
@@ -51,6 +92,7 @@ def limpar_todas_as_paginas():
     st.session_state.mostrar_emprestimos_financiamentos = False
     st.session_state.mostrar_contas_pagar = False
     st.session_state.mostrar_taxas_maquinas = False
+    st.session_state.mostrar_usuarios = False
 
 # === Inicializa estados padrão =======================================================================================
 st.session_state.setdefault("mostrar_entradas", False)
@@ -60,6 +102,8 @@ st.session_state.setdefault("mostrar_mercadorias", False)
 st.session_state.setdefault("mostrar_cartao_credito", False)
 st.session_state.setdefault("mostrar_emprestimos_financiamentos", False)
 st.session_state.setdefault("mostrar_contas_pagar", False)
+st.session_state.setdefault("mostrar_taxas_maquinas", False)
+st.session_state.setdefault("mostrar_usuarios", False)
 st.session_state.setdefault("mes_selecionado", 1)
 st.session_state.setdefault("mes_saida_selecionado", 1)
 st.session_state.setdefault("mes_mercadoria", 1)
@@ -135,6 +179,7 @@ elif opcao == "🧾 Lançamentos":
         limpar_todas_as_paginas()
         st.session_state.mostrar_emprestimos_financiamentos = True
 
+
 # === Submenu da seção Cadastro ======================================================================================
 elif opcao == "🛠️ Cadastro":
     st.markdown("### 🔽 Cadastro\nSelecione uma opção no canto esquerdo em Cadastro que deseja visualizar.")
@@ -145,64 +190,13 @@ elif opcao == "🛠️ Cadastro":
         limpar_todas_as_paginas()
         st.session_state.mostrar_taxas_maquinas = True
 
-# === Página de Cadastro de Taxas de Máquinas =======================================================================
-if st.session_state.get("mostrar_taxas_maquinas", False):
-    st.markdown("### 🛠️ Cadastro de Taxas das Máquinas de Cartão")
+    if st.sidebar.button("Usuários"):
+        limpar_todas_as_paginas()
+        st.session_state.mostrar_usuarios = True 
 
-    with st.form("form_taxas_maquinas"):
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            forma_pagamento = st.selectbox("Forma de Pagamento", ["Débito", "Crédito"], index=1, key="forma_pgto")
-
-        # Define opções de bandeira conforme a forma de pagamento
-        if forma_pagamento == "Débito":
-            opcoes_bandeiras = ["Visa", "Master", "Elo"]
-        else:
-            opcoes_bandeiras = ["Visa", "Master", "Elo", "Amex", "DinersClub"]
-
-        with col2:
-            bandeira = st.selectbox("Bandeira", opcoes_bandeiras, key="bandeira_cartao")
-
-        with col3:
-            if forma_pagamento == "Débito":
-                st.markdown("Parcelas")
-                st.markdown("🔒 Não se aplica para Débito.")
-                parcelas = 1
-            else:
-                parcelas = st.selectbox("Parcelas", list(range(1, 13)), index=1, key="parcelas_cartao")
-
-        with col4:
-            taxa = st.number_input("Taxa (%)", min_value=0.0, format="%.2f", step=0.01, key="taxa_input")
-
-        submitted = st.form_submit_button("Salvar")
-
-        if submitted:
-            with sqlite3.connect(caminho_banco) as conn:
-                conn.execute("""
-                    INSERT INTO taxas_maquinas (forma_pagamento, bandeira, parcelas, taxa_percentual)
-                    VALUES (?, ?, ?, ?)
-                """, (forma_pagamento.upper(), bandeira.upper(), parcelas, taxa))
-                st.success("✅ Cadastro salvo com sucesso!")
-
-    # Mostrar cadastros já existentes
-    with sqlite3.connect(caminho_banco) as conn:
-        df_taxas = pd.read_sql("""
-            SELECT forma_pagamento AS 'Forma de Pagamento', 
-                   bandeira AS 'Bandeira', 
-                   parcelas AS 'Parcelas', 
-                   taxa_percentual AS 'Taxa (%)'
-            FROM taxas_maquinas
-            ORDER BY forma_pagamento, bandeira, parcelas
-        """, conn)
-
-    if not df_taxas.empty:
-        df_taxas["Taxa (%)"] = df_taxas["Taxa (%)"].apply(lambda x: f"{x:.2f}%")
-        st.markdown("### 📋 Taxas Cadastradas:")
-        st.dataframe(df_taxas, use_container_width=True, hide_index=True)
-    else:
-        st.info("Nenhum cadastro encontrado.")
-
+# === PÁGINA DE LANÇAMENTOS DO DIA ===================================================================================
+if st.session_state.get("mostrar_lancamentos_do_dia", False):
+    st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
 
 # === PÁGINA DE ENTRADAS ========================================================================================
 if st.session_state.mostrar_entradas:
@@ -439,4 +433,135 @@ elif st.session_state.get("mostrar_cartao_credito", False):
 # === PÁGINA DE EMPRÉSTIMOS E FINANCIAMENTOS ========================================================================
 elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
     st.markdown("### Emprestimos/Financiamentos\nEm desenvolvimento...")
+
+# === Página de Cadastro de Taxas das Máquinas de Cartão ============================================================
+if st.session_state.get("mostrar_taxas_maquinas", False):
+    st.markdown("### 🛠️ Cadastro de Taxas das Máquinas de Cartão")
+
+    # Fora do formulário: forçar o Streamlit a atualizar as opções
+    forma_pagamento = st.selectbox("Forma de Pagamento", ["Débito", "Crédito"], index=1)
+
+    # Define bandeiras de acordo com forma de pagamento
+    if forma_pagamento == "Débito":
+        opcoes_bandeiras = ["Visa", "Master", "Elo"]
+    else:
+        opcoes_bandeiras = ["Visa", "Master", "Elo", "Amex", "DinersClub"]
+
+    st.divider()  # Separação visual
+
+    # Agora sim, dentro do formulário
+    with st.form("form_taxas_maquinas"):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            bandeira = st.selectbox("Bandeira", opcoes_bandeiras)
+
+        with col2:
+            if forma_pagamento == "Débito":
+                parcelas = 1
+                st.markdown("Parcelas")
+                st.number_input("🔒 Não se aplica para Débito", value=1, disabled=True, label_visibility="collapsed")
+            else:
+                parcelas = st.selectbox("Parcelas", list(range(1, 13)), index=0)
+
+        with col3:
+            taxa = st.number_input("Taxa (%)", min_value=0.0, format="%.2f", step=0.01)
+
+        submitted = st.form_submit_button("Salvar")
+
+        if submitted:
+            with sqlite3.connect(caminho_banco) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS taxas_maquinas (
+                        forma_pagamento TEXT NOT NULL,
+                        bandeira TEXT NOT NULL,
+                        parcelas INTEGER NOT NULL,
+                        taxa_percentual REAL NOT NULL,
+                        PRIMARY KEY (forma_pagamento, bandeira, parcelas)
+                    )
+                """)
+                conn.execute("""
+                    INSERT OR REPLACE INTO taxas_maquinas (forma_pagamento, bandeira, parcelas, taxa_percentual)
+                    VALUES (?, ?, ?, ?)
+                """, (forma_pagamento.upper(), bandeira.upper(), parcelas, taxa))
+                st.success("✅ Cadastro salvo com sucesso!")
+                st.rerun()
+
+    # Exibir tabela
+    with sqlite3.connect(caminho_banco) as conn:
+        df_taxas = pd.read_sql("""
+            SELECT UPPER(forma_pagamento) AS 'Forma de Pagamento', 
+                   UPPER(bandeira) AS 'Bandeira', 
+                   parcelas AS 'Parcelas', 
+                   taxa_percentual AS 'Taxa (%)'
+            FROM taxas_maquinas
+            WHERE NOT (forma_pagamento = 'DÉBITO' AND bandeira IN ('AMEX', 'DINERSCLUB'))
+            ORDER BY forma_pagamento, bandeira, parcelas
+        """, conn)
+
+    if not df_taxas.empty:
+        df_taxas["Taxa (%)"] = df_taxas["Taxa (%)"].apply(lambda x: f"{x:.2f}%")
+        st.markdown("### 📋 Taxas Cadastradas:")
+        st.dataframe(df_taxas, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum cadastro encontrado.")
+
+# === Página de Usuários ============================================================================================
+st.markdown("### 🛠️ Cadastro de Usuários")
+
+with st.form("form_usuarios"):
+    col1, col2 = st.columns(2)
+
+    with col1:
+        nome = st.text_input("Nome Completo", max_chars=100)
+        perfil = st.selectbox("Perfil", ["Administrador", "Gerente", "Vendedor"])
+    
+    with col2:
+        email = st.text_input("Email", max_chars=100)
+        ativo = st.selectbox("Usuário Ativo?", ["Sim", "Não"])
+
+    senha = st.text_input("Senha", type="password", max_chars=50)
+
+    submitted = st.form_submit_button("Salvar")
+
+    if submitted:
+        if not nome or not email or not senha:
+            st.error("Todos os campos são obrigatórios!")
+        elif "@" not in email or "." not in email:
+            st.warning("Digite um e-mail válido.")
+        else:
+            ativo_valor = 1 if ativo == "Sim" else 0
+            try:
+                with sqlite3.connect(caminho_banco) as conn:
+                    conn.execute("""
+                        INSERT INTO usuarios (nome, email, senha, perfil, ativo)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (nome, email, senha, perfil, ativo_valor))
+                    conn.commit()  # <-- IMPORTANTE
+                st.success("✅ Usuário cadastrado com sucesso!")
+                st.rerun()
+            except sqlite3.IntegrityError:
+                st.error("⚠️ Email já cadastrado!")
+            except Exception as e:
+                st.error(f"Erro ao salvar usuário: {e}")
+
+# Exibir tabela de usuários
+with sqlite3.connect(caminho_banco) as conn:
+    df_usuarios = pd.read_sql("SELECT id, nome, email, perfil, ativo FROM usuarios", conn)
+
+if not df_usuarios.empty:
+    df_usuarios["id"] = df_usuarios["id"].astype(str)
+    df_usuarios["ativo"] = df_usuarios["ativo"].map({1: "Sim", 0: "Não"})
+    df_usuarios.rename(columns={
+        "id": "ID",
+        "nome": "Nome",
+        "email": "Email",
+        "perfil": "Perfil",
+        "ativo": "Ativo"
+    }, inplace=True)
+    st.markdown("### 📋 Usuários Cadastrados:")
+    st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
+else:
+    st.info("Nenhum usuário cadastrado.")
+
 
