@@ -1,7 +1,8 @@
 import streamlit as st
-import pandas as pd
 import sqlite3
 import os
+import hashlib
+import pandas as pd
 
 # === CSS personalizado ============================================================================================
 st.markdown("""
@@ -54,6 +55,17 @@ with sqlite3.connect(caminho_banco) as conn:
         )
     """)
 
+# === Função para gerar hash da senha ================================================================================
+def gerar_hash_senha(senha):
+    return hashlib.sha256(senha.encode()).hexdigest()
+
+# === Função de verificação de acesso por perfil =====================================================================
+def verificar_acesso(perfis_permitidos):
+    usuario = st.session_state.get("usuario_logado")
+    if not usuario or usuario.get("perfil") not in perfis_permitidos:
+        st.warning("🚫 Acesso não autorizado.")
+        st.stop()
+
 # === LOGIN DO USUÁRIO ===============================================================================================
 if "usuario_logado" not in st.session_state:
     st.session_state.usuario_logado = None
@@ -67,13 +79,18 @@ if not st.session_state.usuario_logado:
 
         if login_submitted:
             with sqlite3.connect(caminho_banco) as conn:
-                cursor = conn.execute("SELECT nome, perfil FROM usuarios WHERE email = ? AND senha = ? AND ativo = 1", (email_login, senha_login))
+                senha_login_hash = gerar_hash_senha(senha_login)
+                cursor = conn.execute(
+                    "SELECT nome, email, perfil FROM usuarios WHERE email = ? AND senha = ? AND ativo = 1",
+                    (email_login, senha_login_hash)
+                )
                 usuario = cursor.fetchone()
 
             if usuario:
                 st.session_state.usuario_logado = {
                     "nome": usuario[0],
-                    "perfil": usuario[1]
+                    "email": usuario[1],
+                    "perfil": usuario[2]
                 }
                 st.success(f"✅ Bem-vindo, {usuario[0]}!")
                 st.rerun()
@@ -81,32 +98,34 @@ if not st.session_state.usuario_logado:
                 st.error("❌ Usuário ou senha inválidos, ou usuário inativo.")
 
     st.stop()
-    
+
 # === Função para limpar todas as páginas =============================================================================
 def limpar_todas_as_paginas():
-    st.session_state.mostrar_entradas = False
-    st.session_state.mostrar_saidas = False
-    st.session_state.mostrar_lancamentos_do_dia = False
-    st.session_state.mostrar_mercadorias = False
-    st.session_state.mostrar_cartao_credito = False
-    st.session_state.mostrar_emprestimos_financiamentos = False
-    st.session_state.mostrar_contas_pagar = False
-    st.session_state.mostrar_taxas_maquinas = False
-    st.session_state.mostrar_usuarios = False
+    chaves = [
+        "mostrar_entradas", "mostrar_saidas", "mostrar_lancamentos_do_dia",
+        "mostrar_mercadorias", "mostrar_cartao_credito", "mostrar_emprestimos_financiamentos",
+        "mostrar_contas_pagar", "mostrar_taxas_maquinas", "mostrar_usuarios"
+    ]
+    for chave in chaves:
+        st.session_state[chave] = False
 
 # === Inicializa estados padrão =======================================================================================
-st.session_state.setdefault("mostrar_entradas", False)
-st.session_state.setdefault("mostrar_saidas", False)
-st.session_state.setdefault("mostrar_lancamentos_do_dia", False)
-st.session_state.setdefault("mostrar_mercadorias", False)
-st.session_state.setdefault("mostrar_cartao_credito", False)
-st.session_state.setdefault("mostrar_emprestimos_financiamentos", False)
-st.session_state.setdefault("mostrar_contas_pagar", False)
-st.session_state.setdefault("mostrar_taxas_maquinas", False)
-st.session_state.setdefault("mostrar_usuarios", False)
-st.session_state.setdefault("mes_selecionado", 1)
-st.session_state.setdefault("mes_saida_selecionado", 1)
-st.session_state.setdefault("mes_mercadoria", 1)
+estados_iniciais = {
+    "mostrar_entradas": False,
+    "mostrar_saidas": False,
+    "mostrar_lancamentos_do_dia": False,
+    "mostrar_mercadorias": False,
+    "mostrar_cartao_credito": False,
+    "mostrar_emprestimos_financiamentos": False,
+    "mostrar_contas_pagar": False,
+    "mostrar_taxas_maquinas": False,
+    "mostrar_usuarios": False,
+    "mes_selecionado": 1,
+    "mes_saida_selecionado": 1,
+    "mes_mercadoria": 1
+}
+for chave, valor in estados_iniciais.items():
+    st.session_state.setdefault(chave, valor)
 
 # === Nome dos meses ================================================================================================
 nome_meses = {
@@ -125,27 +144,38 @@ st.title("")
 if "pagina_atual" not in st.session_state:
     st.session_state["pagina_atual"] = None
 
-opcao = st.sidebar.radio("Opções:", [
-    "📊 Dashboard",
-    "📉 DRE",
-    "🧾 Lançamentos",
-    "🛠️ Cadastro"
-])
+usuario = st.session_state.get("usuario_logado")
+perfil_usuario = usuario.get("perfil") if usuario else None
 
-# Se mudou a página, limpa todas as visões e salva a nova opção
+# Define as opções do menu conforme o perfil
+opcoes_disponiveis = []
+
+if perfil_usuario in ["Administrador", "Gerente", "Vendedor"]:
+    opcoes_disponiveis.extend(["📊 Dashboard", "🧾 Lançamentos"])
+
+if perfil_usuario in ["Administrador", "Gerente"]:
+    opcoes_disponiveis.append("📉 DRE")
+
+if perfil_usuario == "Administrador":
+    opcoes_disponiveis.append("🛠️ Cadastro")
+
+# Menu lateral com base nas permissões
+opcao = st.sidebar.radio("Opções:", opcoes_disponiveis)
+
+# Atualiza a página ativa
 if st.session_state["pagina_atual"] != opcao:
     limpar_todas_as_paginas()
     st.session_state["pagina_atual"] = opcao
 
-# === Submenu da seção Dashboard =====================================================================================
+# === Submenu: Dashboard ============================================================================================
 if opcao == "📊 Dashboard":
     st.markdown("### 📊 Dashboard\nEm desenvolvimento...")
 
-# === Submenu da seção DRE ==========================================================================================
+# === Submenu: DRE ================================================================================================
 elif opcao == "📉 DRE":
     st.markdown("### 📉 DRE\nEm desenvolvimento...")
 
-# === Submenu da seção Lançamentos ==================================================================================
+# === Submenu: Lançamentos ========================================================================================
 elif opcao == "🧾 Lançamentos":
     st.markdown("### 🔽 Lançamentos\nSelecione uma opção no canto esquerdo em Lançamentos que deseja visualizar.")
     st.sidebar.markdown("---")
@@ -175,12 +205,11 @@ elif opcao == "🧾 Lançamentos":
         limpar_todas_as_paginas()
         st.session_state.mostrar_cartao_credito = True
 
-    if st.sidebar.button("Emprestimos e Financiamentos"):
+    if st.sidebar.button("Empréstimos e Financiamentos"):
         limpar_todas_as_paginas()
         st.session_state.mostrar_emprestimos_financiamentos = True
 
-
-# === Submenu da seção Cadastro ======================================================================================
+# === Submenu: Cadastro ============================================================================================
 elif opcao == "🛠️ Cadastro":
     st.markdown("### 🔽 Cadastro\nSelecione uma opção no canto esquerdo em Cadastro que deseja visualizar.")
     st.sidebar.markdown("---")
@@ -192,13 +221,23 @@ elif opcao == "🛠️ Cadastro":
 
     if st.sidebar.button("Usuários"):
         limpar_todas_as_paginas()
-        st.session_state.mostrar_usuarios = True 
+        st.session_state.mostrar_usuarios = True
 
 # === PÁGINA DE LANÇAMENTOS DO DIA ===================================================================================
 if st.session_state.get("mostrar_lancamentos_do_dia", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
     st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
 
 # === PÁGINA DE ENTRADAS ========================================================================================
+if st.session_state.get("mostrar_entradas", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+
 if st.session_state.mostrar_entradas:
     df = carregar_tabela("entrada")
     st.subheader("📥 Tabela de Entradas")
@@ -269,6 +308,12 @@ if st.session_state.mostrar_entradas:
     st.dataframe(df_detalhado, use_container_width=True, hide_index=True)
 
 # === PÁGINA DE SAÍDAS =============================================================================================
+if st.session_state.get("mostrar_saidas", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+
 elif st.session_state.mostrar_saidas:
     df = carregar_tabela("saida")
     st.subheader("📤 Tabela de Saídas")
@@ -343,6 +388,12 @@ elif st.session_state.mostrar_saidas:
     st.dataframe(df_detalhado, use_container_width=True, hide_index=True)
 
 # === PÁGINA DE MERCADORIAS ========================================================================================
+if st.session_state.get("mostrar_mercadorias", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+
 elif st.session_state.get("mostrar_mercadorias", False):
     st.markdown("### 📦 Mercadorias")
 
@@ -423,18 +474,45 @@ elif st.session_state.get("mostrar_mercadorias", False):
         st.warning("Não foi possível carregar a tabela de mercadorias.")
 
 # === PÁGINA DE CONTAS A PAGAR ===================================================================================
+if st.session_state.get("mostrar_contas_pagar", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+    st.markdown("### Contas a Pagar\nEm desenvolvimento...")
+
 elif st.session_state.get("mostrar_contas_pagar", False):
     st.markdown("### Conatas a Pagar\nEm desenvolvimento...")
 
 # === PÁGINA DE CARTÃO DE CRÉDITO ===================================================================================
+if st.session_state.get("mostrar_cartao_credito", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+    st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
+
 elif st.session_state.get("mostrar_cartao_credito", False):
     st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
 
 # === PÁGINA DE EMPRÉSTIMOS E FINANCIAMENTOS ========================================================================
+if st.session_state.get("mostrar_emprestimos_financiamentos", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+    st.markdown("### Empréstimos e Financiamentos\nEm desenvolvimento...")
+
 elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
     st.markdown("### Emprestimos/Financiamentos\nEm desenvolvimento...")
 
 # === Página de Cadastro de Taxas das Máquinas de Cartão ============================================================
+if st.session_state.get("mostrar_taxas_maquinas", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+
 if st.session_state.get("mostrar_taxas_maquinas", False):
     st.markdown("### 🛠️ Cadastro de Taxas das Máquinas de Cartão")
 
@@ -507,61 +585,88 @@ if st.session_state.get("mostrar_taxas_maquinas", False):
         st.info("Nenhum cadastro encontrado.")
 
 # === Página de Usuários ============================================================================================
-st.markdown("### 🛠️ Cadastro de Usuários")
+if st.session_state.get("mostrar_usuarios", False):
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
 
-with st.form("form_usuarios"):
-    col1, col2 = st.columns(2)
+if st.session_state.get("mostrar_usuarios", False):
+    st.markdown("### 🛠️ Cadastro de Usuários")
 
-    with col1:
-        nome = st.text_input("Nome Completo", max_chars=100)
-        perfil = st.selectbox("Perfil", ["Administrador", "Gerente", "Vendedor"])
-    
-    with col2:
-        email = st.text_input("Email", max_chars=100)
-        ativo = st.selectbox("Usuário Ativo?", ["Sim", "Não"])
+    with st.form("form_usuarios"):
+        col1, col2 = st.columns(2)
 
-    senha = st.text_input("Senha", type="password", max_chars=50)
+        with col1:
+            nome = st.text_input("Nome Completo", max_chars=100)
+            perfil = st.selectbox("Perfil", ["Administrador", "Gerente", "Vendedor"])
+        
+        with col2:
+            email = st.text_input("Email", max_chars=100)
+            ativo = st.selectbox("Usuário Ativo?", ["Sim", "Não"])
 
-    submitted = st.form_submit_button("Salvar")
+        senha = st.text_input("Senha", type="password", max_chars=50)
+        confirmar_senha = st.text_input("Confirmar Senha", type="password", max_chars=50)
 
-    if submitted:
-        if not nome or not email or not senha:
-            st.error("Todos os campos são obrigatórios!")
-        elif "@" not in email or "." not in email:
-            st.warning("Digite um e-mail válido.")
-        else:
-            ativo_valor = 1 if ativo == "Sim" else 0
-            try:
-                with sqlite3.connect(caminho_banco) as conn:
-                    conn.execute("""
-                        INSERT INTO usuarios (nome, email, senha, perfil, ativo)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (nome, email, senha, perfil, ativo_valor))
-                    conn.commit()  # <-- IMPORTANTE
-                st.success("✅ Usuário cadastrado com sucesso!")
-                st.rerun()
-            except sqlite3.IntegrityError:
-                st.error("⚠️ Email já cadastrado!")
-            except Exception as e:
-                st.error(f"Erro ao salvar usuário: {e}")
+        submitted = st.form_submit_button("Salvar")
 
-# Exibir tabela de usuários
-with sqlite3.connect(caminho_banco) as conn:
-    df_usuarios = pd.read_sql("SELECT id, nome, email, perfil, ativo FROM usuarios", conn)
+        if submitted:
+            if not nome or not email or not senha or not confirmar_senha:
+                st.error("Todos os campos são obrigatórios!")
+            elif senha != confirmar_senha:
+                st.warning("As senhas não coincidem. Tente novamente.")
+            elif "@" not in email or "." not in email:
+                st.warning("Digite um e-mail válido.")
+            else:
+                senha_hash = gerar_hash_senha(senha)
+                ativo_valor = 1 if ativo == "Sim" else 0
+                try:
+                    with sqlite3.connect(caminho_banco) as conn:
+                        conn.execute("""
+                            INSERT INTO usuarios (nome, email, senha, perfil, ativo)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (nome, email, senha_hash, perfil, ativo_valor))
+                        conn.commit()
+                    st.success("✅ Usuário cadastrado com sucesso!")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("⚠️ Email já cadastrado!")
+                except Exception as e:
+                    st.error(f"Erro ao salvar usuário: {e}")
 
-if not df_usuarios.empty:
-    df_usuarios["id"] = df_usuarios["id"].astype(str)
-    df_usuarios["ativo"] = df_usuarios["ativo"].map({1: "Sim", 0: "Não"})
-    df_usuarios.rename(columns={
-        "id": "ID",
-        "nome": "Nome",
-        "email": "Email",
-        "perfil": "Perfil",
-        "ativo": "Ativo"
-    }, inplace=True)
+    # Exibir tabela de usuários com botões de ação
     st.markdown("### 📋 Usuários Cadastrados:")
-    st.dataframe(df_usuarios, use_container_width=True, hide_index=True)
-else:
-    st.info("Nenhum usuário cadastrado.")
 
+    with sqlite3.connect(caminho_banco) as conn:
+        df_usuarios = pd.read_sql("SELECT id, nome, email, perfil, ativo FROM usuarios", conn)
 
+    if not df_usuarios.empty:
+        for _, row in df_usuarios.iterrows():
+            col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 2, 2])
+            
+            with col1:
+                st.write(f"👤 {row['nome']}")
+            with col2:
+                st.write(f" {row['email']}")
+            with col3:
+                status_text = "🟢 Ativo" if row["ativo"] == 1 else "🔴 Inativo"
+                st.write(status_text)
+            with col4:
+                if st.button("🔁 ON/OFF", key=f"ativar_{row['id']}"):
+                    novo_status = 0 if row["ativo"] == 1 else 1
+                    with sqlite3.connect(caminho_banco) as conn:
+                        conn.execute("UPDATE usuarios SET ativo = ? WHERE id = ?", (novo_status, row["id"]))
+                        conn.commit()
+                    st.rerun()
+            with col5:
+                if st.button("🗑️ Excluir", key=f"excluir_{row['id']}"):
+                    if st.session_state.usuario_logado["email"] == row["email"]:
+                        st.warning("⚠️ Você não pode excluir seu próprio usuário enquanto estiver logado.")
+                    else:
+                        with sqlite3.connect(caminho_banco) as conn:
+                            conn.execute("DELETE FROM usuarios WHERE id = ?", (row["id"],))
+                            conn.commit()
+                        st.success(f"✅ Usuário '{row['nome']}' excluído.")
+                        st.rerun()
+    else:
+        st.info("Nenhum usuário cadastrado.")
