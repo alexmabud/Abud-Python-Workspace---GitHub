@@ -66,6 +66,13 @@ def verificar_acesso(perfis_permitidos):
         st.warning("🚫 Acesso não autorizado.")
         st.stop()
 
+# === Exibir usuário logado =========================================================================================
+def exibir_usuario_logado():
+    usuario = st.session_state.get("usuario_logado")
+    if usuario:
+        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
+        st.markdown("---")
+
 # === LOGIN DO USUÁRIO ===============================================================================================
 if "usuario_logado" not in st.session_state:
     st.session_state.usuario_logado = None
@@ -225,18 +232,13 @@ elif opcao == "🛠️ Cadastro":
 
 # === PÁGINA DE LANÇAMENTOS DO DIA ===================================================================================
 if st.session_state.get("mostrar_lancamentos_do_dia", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
+
     st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
 
 # === PÁGINA DE ENTRADAS ========================================================================================
 if st.session_state.get("mostrar_entradas", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
 
 if st.session_state.mostrar_entradas:
     df = carregar_tabela("entrada")
@@ -309,15 +311,11 @@ if st.session_state.mostrar_entradas:
 
 # === PÁGINA DE SAÍDAS =============================================================================================
 if st.session_state.get("mostrar_saidas", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
 
-elif st.session_state.mostrar_saidas:
     df = carregar_tabela("saida")
     st.subheader("📤 Tabela de Saídas")
-
+   
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
     # Total geral
@@ -389,14 +387,9 @@ elif st.session_state.mostrar_saidas:
 
 # === PÁGINA DE MERCADORIAS ========================================================================================
 if st.session_state.get("mostrar_mercadorias", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
 
-elif st.session_state.get("mostrar_mercadorias", False):
     st.markdown("### 📦 Mercadorias")
-
     df = carregar_tabela("mercadorias")
 
     if not df.empty:
@@ -475,10 +468,8 @@ elif st.session_state.get("mostrar_mercadorias", False):
 
 # === PÁGINA DE CONTAS A PAGAR ===================================================================================
 if st.session_state.get("mostrar_contas_pagar", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
+
     st.markdown("### Contas a Pagar\nEm desenvolvimento...")
 
 elif st.session_state.get("mostrar_contas_pagar", False):
@@ -486,10 +477,8 @@ elif st.session_state.get("mostrar_contas_pagar", False):
 
 # === PÁGINA DE CARTÃO DE CRÉDITO ===================================================================================
 if st.session_state.get("mostrar_cartao_credito", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
+
     st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
 
 elif st.session_state.get("mostrar_cartao_credito", False):
@@ -497,10 +486,8 @@ elif st.session_state.get("mostrar_cartao_credito", False):
 
 # === PÁGINA DE EMPRÉSTIMOS E FINANCIAMENTOS ========================================================================
 if st.session_state.get("mostrar_emprestimos_financiamentos", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
+
     st.markdown("### Empréstimos e Financiamentos\nEm desenvolvimento...")
 
 elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
@@ -508,10 +495,7 @@ elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
 
 # === Página de Cadastro de Taxas das Máquinas de Cartão ============================================================
 if st.session_state.get("mostrar_taxas_maquinas", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
 
 if st.session_state.get("mostrar_taxas_maquinas", False):
     st.markdown("### 🛠️ Cadastro de Taxas das Máquinas de Cartão")
@@ -586,10 +570,7 @@ if st.session_state.get("mostrar_taxas_maquinas", False):
 
 # === Página de Usuários ============================================================================================
 if st.session_state.get("mostrar_usuarios", False):
-    usuario = st.session_state.get("usuario_logado")
-    if usuario:
-        st.markdown(f"👤 **{usuario['nome']}** — Perfil: `{usuario['perfil']}`")
-        st.markdown("---")
+    exibir_usuario_logado()
 
 if st.session_state.get("mostrar_usuarios", False):
     st.markdown("### 🛠️ Cadastro de Usuários")
