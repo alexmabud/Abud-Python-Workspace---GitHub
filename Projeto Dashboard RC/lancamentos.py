@@ -3,6 +3,10 @@ import sqlite3
 import os
 import hashlib
 import pandas as pd
+import re
+from datetime import date
+from workalendar.america import BrazilDistritoFederal
+from datetime import timedelta
 
 # === CSS personalizado ============================================================================================
 st.markdown("""
@@ -59,6 +63,20 @@ with sqlite3.connect(caminho_banco) as conn:
 def gerar_hash_senha(senha):
     return hashlib.sha256(senha.encode()).hexdigest()
 
+# === Função para validar força da senha =============================================================================
+def senha_forte(senha):
+    if len(senha) < 8:
+        return False
+    if not re.search(r"[A-Z]", senha):  # letra maiúscula
+        return False
+    if not re.search(r"[a-z]", senha):  # letra minúscula
+        return False
+    if not re.search(r"[0-9]", senha):  # número
+        return False
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", senha):  # símbolo
+        return False
+    return True
+
 # === Função de verificação de acesso por perfil =====================================================================
 def verificar_acesso(perfis_permitidos):
     usuario = st.session_state.get("usuario_logado")
@@ -109,12 +127,26 @@ if not st.session_state.usuario_logado:
 # === Função para limpar todas as páginas =============================================================================
 def limpar_todas_as_paginas():
     chaves = [
-        "mostrar_entradas", "mostrar_saidas", "mostrar_lancamentos_do_dia",
+        "mostrar_metas", "mostrar_entradas", "mostrar_saidas", "mostrar_lancamentos_do_dia",
         "mostrar_mercadorias", "mostrar_cartao_credito", "mostrar_emprestimos_financiamentos",
-        "mostrar_contas_pagar", "mostrar_taxas_maquinas", "mostrar_usuarios"
+        "mostrar_contas_pagar", "mostrar_taxas_maquinas", "mostrar_usuarios",
+        "mostrar_fechamento_caixa", "mostrar_correcao_caixa"  # 👈 Adiciona aqui
     ]
     for chave in chaves:
         st.session_state[chave] = False
+
+# === Função para obter o último dia útil antes de uma data base ====================================================
+cal = BrazilDistritoFederal()
+
+def ultimo_dia_util(data_base):
+    """
+    Retorna o último dia útil antes da data_base,
+    considerando fins de semana e feriados (DF).
+    """
+    data = data_base - timedelta(days=1)
+    while not cal.is_working_day(data):
+        data -= timedelta(days=1)
+    return data
 
 # === Inicializa estados padrão =======================================================================================
 estados_iniciais = {
@@ -127,6 +159,8 @@ estados_iniciais = {
     "mostrar_contas_pagar": False,
     "mostrar_taxas_maquinas": False,
     "mostrar_usuarios": False,
+    "mostrar_fechamento_caixa": False,
+    "mostrar_correcao_caixa": False,
     "mes_selecionado": 1,
     "mes_saida_selecionado": 1,
     "mes_mercadoria": 1
@@ -141,11 +175,26 @@ nome_meses = {
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
 }
 
+
 # === SIDEBAR ========================================================================================================
-st.sidebar.markdown("## Selecione uma opção:")
+usuario = st.session_state.get("usuario_logado")
+perfil_usuario = usuario.get("perfil") if usuario else None
+
+# Mostrar nome e perfil
+if usuario:
+    st.sidebar.markdown(f"👤 **{usuario['nome']}**\n🔐 Perfil: `{usuario['perfil']}`")
+
+    # Botão Sair (visível para todos os perfis)
+    if st.sidebar.button("🚪 Sair", key="botao_sair"):
+        st.session_state.usuario_logado = None
+        st.rerun()
+
+    # Espaçamento e separador
+    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+    st.sidebar.markdown("---")
 
 # === TÍTULO PRINCIPAL ===============================================================================================
-st.title("")
+st.title("")  # pode ser atualizado depois dinamicamente
 
 # === Controle da página principal ===================================================================================
 if "pagina_atual" not in st.session_state:
@@ -158,7 +207,16 @@ perfil_usuario = usuario.get("perfil") if usuario else None
 opcoes_disponiveis = []
 
 if perfil_usuario in ["Administrador", "Gerente", "Vendedor"]:
-    opcoes_disponiveis.extend(["📊 Dashboard", "🧾 Lançamentos"])
+    opcoes_disponiveis.append("🎯 Metas")
+
+if perfil_usuario in ["Administrador", "Gerente"]:
+    opcoes_disponiveis.append("💼 Fechamento de Caixa")
+
+if perfil_usuario in ["Administrador", "Gerente"]:
+    opcoes_disponiveis.append("📊 Dashboard")
+
+if perfil_usuario in ["Administrador", "Gerente", "Vendedor"]:
+    opcoes_disponiveis.append("🧾 Lançamentos")
 
 if perfil_usuario in ["Administrador", "Gerente"]:
     opcoes_disponiveis.append("📉 DRE")
@@ -167,24 +225,34 @@ if perfil_usuario == "Administrador":
     opcoes_disponiveis.append("🛠️ Cadastro")
 
 # Menu lateral com base nas permissões
-opcao = st.sidebar.radio("Opções:", opcoes_disponiveis)
+st.sidebar.markdown("#### 🧭 Selecione uma opção abaixo:")
+st.sidebar.markdown('<div class="sidebar-opcoes"> Opções:</div>', unsafe_allow_html=True)
+opcao = st.sidebar.radio("", opcoes_disponiveis)
 
 # Atualiza a página ativa
 if st.session_state["pagina_atual"] != opcao:
     limpar_todas_as_paginas()
     st.session_state["pagina_atual"] = opcao
 
+# Atualiza o título principal
+st.title(opcao)
+
+# === Submenu: Metas ================================================================================================
+if opcao == "🎯 Metas":
+    st.markdown("🎯 Metas em desenvolvimento...")
+
 # === Submenu: Dashboard ============================================================================================
-if opcao == "📊 Dashboard":
-    st.markdown("### 📊 Dashboard\nEm desenvolvimento...")
+elif opcao == "📊 Dashboard":
+    st.markdown("📊 Dashboard em desenvolvimento...")
 
 # === Submenu: DRE ================================================================================================
 elif opcao == "📉 DRE":
-    st.markdown("### 📉 DRE\nEm desenvolvimento...")
+    st.markdown("📉 DRE em desenvolvimento...")
 
 # === Submenu: Lançamentos ========================================================================================
 elif opcao == "🧾 Lançamentos":
-    st.markdown("### 🔽 Lançamentos\nSelecione uma opção no canto esquerdo em Lançamentos que deseja visualizar.")
+    st.markdown("📌 Selecione uma opção no menu à esquerda para visualização.")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔽 Lançamentos")
 
@@ -192,65 +260,175 @@ elif opcao == "🧾 Lançamentos":
         limpar_todas_as_paginas()
         st.session_state.mostrar_lancamentos_do_dia = True
 
-    if st.sidebar.button("📥 Ver Entradas"):
-        limpar_todas_as_paginas()
-        st.session_state.mostrar_entradas = True
+    if perfil_usuario in ["Administrador", "Gerente"]:
+        if st.sidebar.button("📥 Ver Entradas"):
+            limpar_todas_as_paginas()
+            st.session_state.mostrar_entradas = True
 
-    if st.sidebar.button("📤 Ver Saídas"):
-        limpar_todas_as_paginas()
-        st.session_state.mostrar_saidas = True
+        if st.sidebar.button("📤 Ver Saídas"):
+            limpar_todas_as_paginas()
+            st.session_state.mostrar_saidas = True
 
-    if st.sidebar.button("📦 Ver Mercadorias"):
-        limpar_todas_as_paginas()
-        st.session_state.mostrar_mercadorias = True
+        if st.sidebar.button("📦 Ver Mercadorias"):
+            limpar_todas_as_paginas()
+            st.session_state.mostrar_mercadorias = True
 
-    if st.sidebar.button("Ver Contas a Pagar"):
-        limpar_todas_as_paginas()
-        st.session_state.mostrar_contas_pagar = True
+        if st.sidebar.button("💳 Ver Cartão de Crédito"):
+            limpar_todas_as_paginas()
+            st.session_state.mostrar_cartao_credito = True
 
-    if st.sidebar.button("Ver Cartão de Crédito"):
-        limpar_todas_as_paginas()
-        st.session_state.mostrar_cartao_credito = True
+        if st.sidebar.button("📋 Ver Contas a Pagar"):
+            limpar_todas_as_paginas()
+            st.session_state.mostrar_contas_pagar = True
 
-    if st.sidebar.button("Empréstimos e Financiamentos"):
-        limpar_todas_as_paginas()
-        st.session_state.mostrar_emprestimos_financiamentos = True
+        if st.sidebar.button("💰 Empréstimos e Financiamentos"):
+            limpar_todas_as_paginas()
+            st.session_state.mostrar_emprestimos_financiamentos = True
+
+# === Submenu: Fechamento de Caixa ================================================================================
+elif opcao == "💼 Fechamento de Caixa":
+  
+    data_fechamento = st.date_input("Data do Fechamento", value=date.today())
+    data_fechamento_str = str(data_fechamento)
+    data_util_anterior = ultimo_dia_util(data_fechamento)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        banco_1 = st.number_input("Saldo Banco 1", min_value=0.0, step=10.0)
+    with col2:
+        banco_2 = st.number_input("Saldo Banco 2", min_value=0.0, step=10.0)
+    with col3:
+        banco_4 = st.number_input("Saldo Banco 4", min_value=0.0, step=10.0)
+
+    col4, col5 = st.columns(2)
+    with col4:
+        caixa_loja = st.number_input("Caixa", min_value=0.0, step=10.0)
+    with col5:
+        caixa_casa = st.number_input("Caixa 2", min_value=0.0, step=10.0)
+
+# === Entradas confirmadas (Pix/Dinheiro do dia + Crédito/Débito do D-1 útil) ===
+    df_entrada = carregar_tabela("entrada")
+    df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
+
+    df_confirmadas = df_entrada[
+        (
+            ((df_entrada["Forma_de_Pagamento"].astype(str).str.upper().isin(["PIX", "DINHEIRO"])) &
+            (df_entrada["Data"].dt.date == data_fechamento)) |
+            ((df_entrada["Forma_de_Pagamento"].astype(str).str.upper().isin(["CRÉDITO", "CREDITO", "DÉBITO", "DEBITO"])) &
+            (df_entrada["Data"].dt.date == data_util_anterior))
+        )
+    ]
+    total_entradas = df_confirmadas["Valor"].sum()
+
+    # === Saídas do dia ===
+    df_saida = carregar_tabela("saida")
+    df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
+    df_saida_dia = df_saida[df_saida["Data"].dt.date == data_fechamento]
+    total_saidas = df_saida_dia["Valor"].sum()
+
+    # === Correções manuais do dia ===
+    with sqlite3.connect(caminho_banco) as conn:
+        cursor = conn.execute("SELECT SUM(valor) FROM correcao_caixa WHERE data = ?", (data_fechamento_str,))
+        total_correcao = cursor.fetchone()[0] or 0.0
+
+    # === Cálculo do saldo esperado ===
+    saldo_esperado = total_entradas - total_saidas + total_correcao
+
+    # === Valor informado real (somado pelos campos digitados)
+    valor_informado = banco_1 + banco_2 + banco_4 + caixa_loja + caixa_casa
+    diferenca = valor_informado - saldo_esperado
+
+    # === Exibição do Resumo
+    st.markdown("### 📊 Resumo do Fechamento do Dia")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info(f"Entradas confirmadas: R$ {total_entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    with col2:
+        st.error(f"Saídas: R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    with col3:
+        st.success(f"Correções: R$ {total_correcao:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    st.markdown(f"### 💰 Saldo Esperado: R$ {saldo_esperado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    st.markdown(f"### 💵 Valor Informado: R$ {valor_informado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    if diferenca == 0:
+        st.success("✅ Caixa Correto! Não há diferença.")
+    else:
+        cor = "🟢" if diferenca > 0 else "🔴"
+        st.warning(f"### {cor} Diferença: R$ {diferenca:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    if st.button("💾 Salvar Fechamento"):
+        try:
+            with sqlite3.connect(caminho_banco) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS fechamento_caixa (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        data TEXT NOT NULL,
+                        banco_1 REAL,
+                        banco_2 REAL,
+                        banco_4 REAL,
+                        caixa_loja REAL,
+                        caixa_casa REAL,
+                        entradas_confirmadas REAL,
+                        saidas REAL,
+                        correcao REAL,
+                        saldo_esperado REAL,
+                        valor_informado REAL,
+                        diferenca REAL
+                    )
+                """)
+
+                conn.execute("""
+                    INSERT INTO fechamento_caixa (
+                        data, banco_1, banco_2, banco_4, caixa_loja, caixa_casa,
+                        entradas_confirmadas, saidas, correcao, saldo_esperado, valor_informado, diferenca
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(data_fechamento), banco_1, banco_2, banco_4, caixa_loja, caixa_casa,
+                    total_entradas, total_saidas, total_correcao,
+                    saldo_esperado, valor_informado, diferenca
+                ))
+                conn.commit()
+            st.success("✅ Fechamento salvo com sucesso!")
+        except Exception as e:
+            st.error(f"Erro ao salvar: {e}")
 
 # === Submenu: Cadastro ============================================================================================
 elif opcao == "🛠️ Cadastro":
-    st.markdown("### 🔽 Cadastro\nSelecione uma opção no canto esquerdo em Cadastro que deseja visualizar.")
+    st.markdown("📌 Selecione uma opção no menu à esquerda para visualização.")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔽 Cadastro")
 
-    if st.sidebar.button("Taxas de Máquinas"):
+    if st.sidebar.button("⚙️ Taxas de Máquinas"):
         limpar_todas_as_paginas()
         st.session_state.mostrar_taxas_maquinas = True
 
-    if st.sidebar.button("Usuários"):
+    if st.sidebar.button("👥 Usuários"):
         limpar_todas_as_paginas()
         st.session_state.mostrar_usuarios = True
 
-# === PÁGINA DE LANÇAMENTOS DO DIA ===================================================================================
+    if st.sidebar.button("🛠️ Correção de Caixa"):
+        limpar_todas_as_paginas()
+        st.session_state.mostrar_correcao_caixa = True
+
+# === Página: Lançamentos do Dia =====================================================================================
 if st.session_state.get("mostrar_lancamentos_do_dia", False):
-    exibir_usuario_logado()
+    st.markdown("### 📅 Lançamentos do Dia")
+    st.info("Funcionalidade em desenvolvimento...")
 
-    st.markdown("### 📅 Lançamentos do Dia\nEm desenvolvimento...")
-
-# === PÁGINA DE ENTRADAS ========================================================================================
+# === Página: Entradas ==============================================================================================
 if st.session_state.get("mostrar_entradas", False):
-    exibir_usuario_logado()
-
-if st.session_state.mostrar_entradas:
-    df = carregar_tabela("entrada")
     st.subheader("📥 Tabela de Entradas")
 
+    df = carregar_tabela("entrada")
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
     # Total geral
     total_geral = df["Valor"].sum()
     st.success(f"### 📊 Total de todos os anos de Entradas: R$ {total_geral:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    # Tabela de total por ano
+    # Totais por ano
     st.markdown("### 📆 Totais por ano:")
     df["Ano"] = df["Data"].dt.year.astype("Int64")
     totais_por_ano = df.groupby("Ano")["Valor"].sum().reset_index()
@@ -259,14 +437,15 @@ if st.session_state.mostrar_entradas:
     totais_por_ano["Total"] = totais_por_ano["Total"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     st.dataframe(totais_por_ano, use_container_width=True, hide_index=True)
 
+    # Filtro por ano
     anos = sorted(df["Data"].dt.year.dropna().unique())
     st.markdown("### 📅 Selecione o ano:")
     ano = st.selectbox("", anos)
     df_ano = df[df["Data"].dt.year == ano]
-
     total_ano = df_ano["Valor"].sum()
     st.success(f"### 💰 Total de Entradas no ano de {ano}: R$ {total_ano:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
+    # Totais por mês
     totais_por_mes = df_ano.groupby(df_ano["Data"].dt.month)["Valor"].sum().reindex(range(1, 13), fill_value=0).reset_index()
     totais_por_mes.columns = ["Mês", "Total"]
     totais_por_mes["Mês"] = totais_por_mes["Mês"].map(nome_meses)
@@ -274,6 +453,7 @@ if st.session_state.mostrar_entradas:
     st.markdown("### 📈 Totais por mês no ano selecionado")
     st.dataframe(totais_por_mes, use_container_width=True, hide_index=True)
 
+    # Filtro por mês
     st.markdown("### 📅 Selecione o mês:")
     for inicio in [1, 7]:
         colunas = st.columns(6)
@@ -285,7 +465,6 @@ if st.session_state.mostrar_entradas:
     mes = st.session_state.mes_selecionado
     nome_mes = nome_meses[mes]
     df_mes = df_ano[df_ano["Data"].dt.month == mes].copy()
-
     total_mes = df_mes["Valor"].sum()
     st.success(f"### 🗓️ Total de Entradas no mês de {nome_mes}: R$ {total_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
@@ -303,27 +482,24 @@ if st.session_state.mostrar_entradas:
     df_detalhado["Data"] = df_detalhado["Data"].dt.strftime("%d/%m/%Y")
     if "Valor" in df_detalhado.columns:
         df_detalhado["Valor"] = df_detalhado["Valor"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    if "id" in df_detalhado.columns:
-        df_detalhado = df_detalhado.drop(columns=["id"])
-    if "Ano" in df_detalhado.columns:
-        df_detalhado = df_detalhado.drop(columns=["Ano"])
+    for col in ["id", "Ano"]:
+        if col in df_detalhado.columns:
+            df_detalhado = df_detalhado.drop(columns=[col])
     st.dataframe(df_detalhado, use_container_width=True, hide_index=True)
 
-# === PÁGINA DE SAÍDAS =============================================================================================
+# === Página: Saídas ================================================================================================
 if st.session_state.get("mostrar_saidas", False):
-    exibir_usuario_logado()
+    st.subheader("📤 Tabela de Saídas")
 
     df = carregar_tabela("saida")
-    st.subheader("📤 Tabela de Saídas")
-   
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
     # Total geral
     valor_total_geral = df["Valor"].sum()
-    st.error(f"### 📊 Total todos os anos de Saídas: R$ {valor_total_geral:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    st.error(f"### 📊 Total de todos os anos de Saídas: R$ {valor_total_geral:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    # Tabela de total por ano
-    st.markdown("### 📆 Totais por ano")
+    # Totais por ano
+    st.markdown("### 📆 Totais por ano:")
     df["Ano"] = df["Data"].dt.year.astype("Int64")
     totais_por_ano = df.groupby("Ano")["Valor"].sum().reset_index()
     totais_por_ano.columns = ["Ano", "Total"]
@@ -331,7 +507,7 @@ if st.session_state.get("mostrar_saidas", False):
     totais_por_ano["Total"] = totais_por_ano["Total"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     st.dataframe(totais_por_ano, use_container_width=True, hide_index=True)
 
-    # Seleção do ano
+    # Filtro por ano
     anos_disponiveis = sorted(df["Data"].dt.year.dropna().unique())
     st.markdown("### 📅 Selecione o ano:")
     ano_escolhido = st.selectbox("", anos_disponiveis, key="ano_saida")
@@ -341,7 +517,7 @@ if st.session_state.get("mostrar_saidas", False):
     valor_total_ano = df_ano["Valor"].sum()
     st.error(f"### 💰 Total no ano de {ano_escolhido}: R$ {valor_total_ano:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    # Totais por mês no ano selecionado
+    # Totais por mês
     totais_por_mes = df_ano.groupby(df_ano["Data"].dt.month)["Valor"].sum().reindex(range(1, 13), fill_value=0).reset_index()
     totais_por_mes.columns = ["Mês", "Total"]
     totais_por_mes["Mês"] = totais_por_mes["Mês"].map(nome_meses)
@@ -349,7 +525,7 @@ if st.session_state.get("mostrar_saidas", False):
     st.markdown("### 📈 Totais por mês no ano selecionado")
     st.dataframe(totais_por_mes, use_container_width=True, hide_index=True)
 
-    # Seletor de mês com botões
+    # Filtro por mês
     st.markdown("### 📅 Selecione o mês:")
     for inicio in [1, 7]:
         colunas = st.columns(6)
@@ -361,11 +537,10 @@ if st.session_state.get("mostrar_saidas", False):
     mes_saida = st.session_state.mes_saida_selecionado
     nome_mes = nome_meses[mes_saida]
     df_mes = df_ano[df_ano["Data"].dt.month == mes_saida].copy()
-
     valor_total_mes = df_mes["Valor"].sum()
-    st.error(f"### 🗓️ Total no mês de {nome_mes}: R$ {valor_total_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    st.error(f"### 🗓️ Total de Saídas no mês de {nome_mes}: R$ {valor_total_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    # Tabela resumida (Data + Valor)
+    # Tabela resumida
     df_mes_resumo = df_mes[["Data", "Valor"]].copy()
     df_mes_resumo["Data"] = pd.to_datetime(df_mes_resumo["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
     df_mes_resumo["Valor"] = df_mes_resumo["Valor"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -379,36 +554,35 @@ if st.session_state.get("mostrar_saidas", False):
     df_detalhado["Data"] = df_detalhado["Data"].dt.strftime("%d/%m/%Y")
     if "Valor" in df_detalhado.columns:
         df_detalhado["Valor"] = df_detalhado["Valor"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    if "id" in df_detalhado.columns:
-        df_detalhado = df_detalhado.drop(columns=["id"])
-    if "Ano" in df_detalhado.columns:
-        df_detalhado = df_detalhado.drop(columns=["Ano"])
+    for col in ["id", "Ano"]:
+        if col in df_detalhado.columns:
+            df_detalhado = df_detalhado.drop(columns=[col])
     st.dataframe(df_detalhado, use_container_width=True, hide_index=True)
 
-# === PÁGINA DE MERCADORIAS ========================================================================================
+# === Página: Mercadorias ===========================================================================================
 if st.session_state.get("mostrar_mercadorias", False):
-    exibir_usuario_logado()
+    st.subheader("📦 Tabela de Mercadorias")
 
-    st.markdown("### 📦 Mercadorias")
     df = carregar_tabela("mercadorias")
 
-    if not df.empty:
+    if df.empty:
+        st.warning("⚠️ Não foi possível carregar a tabela de mercadorias.")
+    else:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
-        # Seleção do ano
+        # Filtro por ano
         anos = sorted(df["Data"].dt.year.dropna().unique())
         st.markdown("### 📅 Selecione o ano:")
         ano = st.selectbox("", anos, key="ano_mercadoria")
         df_ano = df[df["Data"].dt.year == ano]
 
-        # 💰 TOTAL DO ANO
+        # Total do ano
         if "Valor_Mercadoria" in df_ano.columns:
             df_ano["Valor_Mercadoria"] = pd.to_numeric(df_ano["Valor_Mercadoria"], errors="coerce")
             total_ano = df_ano["Valor_Mercadoria"].sum()
-            total_ano_formatado = f"R$ {total_ano:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            st.info(f"### 📅 Total de Mercadorias no Ano de {ano}: {total_ano_formatado}")
+            st.info(f"### 📊 Total de Mercadorias no ano de {ano}: R$ {total_ano:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-        # Botões para seleção de mês
+        # Filtro por mês
         st.markdown("### 📅 Selecione o mês:")
         for inicio in [1, 7]:
             colunas = st.columns(6)
@@ -417,40 +591,38 @@ if st.session_state.get("mostrar_mercadorias", False):
                     if st.button(nome_meses[i], key=f"mes_mercadoria_{i}"):
                         st.session_state.mes_mercadoria = i
 
-        # Mês selecionado
         mes = st.session_state.get("mes_mercadoria", 1)
         nome_mes = nome_meses[mes]
         df_mes = df_ano[df_ano["Data"].dt.month == mes].copy()
 
         st.markdown(f"### 📋 Mercadorias de {nome_mes} de {ano}")
 
-        if not df_mes.empty:
-            # 💵 Total do mês
+        if df_mes.empty:
+            st.warning("Nenhum registro encontrado para o mês selecionado.")
+        else:
+            # Total do mês
             if "Valor_Mercadoria" in df_mes.columns:
                 df_mes["Valor_Mercadoria"] = pd.to_numeric(df_mes["Valor_Mercadoria"], errors="coerce")
                 total_mes = df_mes["Valor_Mercadoria"].sum()
-                total_mes_formatado = f"R$ {total_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                st.info(f"### 📦 Total de Mercadorias no Mês: {total_mes_formatado}")
+                st.info(f"### 📦 Total de Mercadorias no mês: R$ {total_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-            # Formatando coluna Data
+            # Formatando datas
             df_mes["Data"] = pd.to_datetime(df_mes["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
-            # Formatar valores em R$
-            df_mes["Valor_Mercadoria"] = df_mes["Valor_Mercadoria"].apply(
-                lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else ""
-            )
-
-            # Datas: dd/mm/aa
             for col in ["Previsao_Faturamento", "Faturamento", "Previsao_Recebimento", "Recebimento"]:
                 if col in df_mes.columns:
                     df_mes[col] = pd.to_datetime(df_mes[col], errors="coerce").dt.strftime("%d/%m/%y")
 
-            # Remover pontuação de Numero_Pedido e Numero_NF
+            # Formatando valores
+            df_mes["Valor_Mercadoria"] = df_mes["Valor_Mercadoria"].apply(
+                lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else ""
+            )
+
+            # Limpando colunas numéricas
             for col in ["Numero_Pedido", "Numero_NF"]:
                 if col in df_mes.columns:
                     df_mes[col] = df_mes[col].astype(str).str.replace(r"[^\d]", "", regex=True)
 
-            # Reorganizar colunas
+            # Exibir colunas organizadas
             colunas_exibir = [
                 "Data", "Colecao", "Fornecedor", "Valor_Mercadoria", "Frete", "Forma_Pagamento",
                 "Parcelas", "Previsao_Faturamento", "Faturamento",
@@ -461,57 +633,36 @@ if st.session_state.get("mostrar_mercadorias", False):
 
             st.dataframe(df_mes, use_container_width=True, hide_index=True)
 
-        else:
-            st.warning("Nenhum registro encontrado para o mês selecionado.")
-    else:
-        st.warning("Não foi possível carregar a tabela de mercadorias.")
-
-# === PÁGINA DE CONTAS A PAGAR ===================================================================================
+# === Página: Contas a Pagar ========================================================================================
 if st.session_state.get("mostrar_contas_pagar", False):
-    exibir_usuario_logado()
+    st.subheader("📄 Contas a Pagar")
+    st.info("🔧 Em desenvolvimento...")
 
-    st.markdown("### Contas a Pagar\nEm desenvolvimento...")
-
-elif st.session_state.get("mostrar_contas_pagar", False):
-    st.markdown("### Conatas a Pagar\nEm desenvolvimento...")
-
-# === PÁGINA DE CARTÃO DE CRÉDITO ===================================================================================
+# === Página: Cartão de Crédito ======================================================================================
 if st.session_state.get("mostrar_cartao_credito", False):
-    exibir_usuario_logado()
+    st.subheader("💳 Cartão de Crédito")
+    st.info("🔧 Em desenvolvimento...")
 
-    st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
-
-elif st.session_state.get("mostrar_cartao_credito", False):
-    st.markdown("### Cartão de Crédito\nEm desenvolvimento...")
-
-# === PÁGINA DE EMPRÉSTIMOS E FINANCIAMENTOS ========================================================================
+# === Página: Empréstimos e Financiamentos ==========================================================================
 if st.session_state.get("mostrar_emprestimos_financiamentos", False):
-    exibir_usuario_logado()
+    st.subheader("🏦 Empréstimos e Financiamentos")
+    st.info("🔧 Em desenvolvimento...")
 
-    st.markdown("### Empréstimos e Financiamentos\nEm desenvolvimento...")
-
-elif st.session_state.get("mostrar_emprestimos_financiamentos", False):
-    st.markdown("### Emprestimos/Financiamentos\nEm desenvolvimento...")
-
-# === Página de Cadastro de Taxas das Máquinas de Cartão ============================================================
+# === Página: Cadastro de Taxas das Máquinas de Cartão ============================================================
 if st.session_state.get("mostrar_taxas_maquinas", False):
-    exibir_usuario_logado()
+    st.subheader("💳 Cadastro de Taxas das Máquinas de Cartão")
 
-if st.session_state.get("mostrar_taxas_maquinas", False):
-    st.markdown("### 🛠️ Cadastro de Taxas das Máquinas de Cartão")
-
-    # Fora do formulário: forçar o Streamlit a atualizar as opções
     forma_pagamento = st.selectbox("Forma de Pagamento", ["Débito", "Crédito"], index=1)
 
-    # Define bandeiras de acordo com forma de pagamento
+    # Bandeiras conforme a forma de pagamento
     if forma_pagamento == "Débito":
         opcoes_bandeiras = ["Visa", "Master", "Elo"]
     else:
         opcoes_bandeiras = ["Visa", "Master", "Elo", "Amex", "DinersClub"]
 
-    st.divider()  # Separação visual
+    st.divider()
 
-    # Agora sim, dentro do formulário
+    # Formulário
     with st.form("form_taxas_maquinas"):
         col1, col2, col3 = st.columns(3)
 
@@ -570,10 +721,7 @@ if st.session_state.get("mostrar_taxas_maquinas", False):
 
 # === Página de Usuários ============================================================================================
 if st.session_state.get("mostrar_usuarios", False):
-    exibir_usuario_logado()
-
-if st.session_state.get("mostrar_usuarios", False):
-    st.markdown("### 🛠️ Cadastro de Usuários")
+    st.subheader("👥 Cadastro de Usuários")
 
     with st.form("form_usuarios"):
         col1, col2 = st.columns(2)
@@ -589,15 +737,21 @@ if st.session_state.get("mostrar_usuarios", False):
         senha = st.text_input("Senha", type="password", max_chars=50)
         confirmar_senha = st.text_input("Confirmar Senha", type="password", max_chars=50)
 
-        submitted = st.form_submit_button("Salvar")
+        submitted = st.form_submit_button("💾 Salvar Usuário")
 
         if submitted:
             if not nome or not email or not senha or not confirmar_senha:
-                st.error("Todos os campos são obrigatórios!")
+                st.error("❗ Todos os campos são obrigatórios!")
+
             elif senha != confirmar_senha:
-                st.warning("As senhas não coincidem. Tente novamente.")
+                st.warning("⚠️ As senhas não coincidem. Tente novamente.")
+
+            elif not senha_forte(senha):
+                st.warning("⚠️ A senha deve ter pelo menos 8 caracteres, com letra maiúscula, minúscula, número e símbolo.")
+
             elif "@" not in email or "." not in email:
-                st.warning("Digite um e-mail válido.")
+                st.warning("⚠️ Digite um e-mail válido.")
+
             else:
                 senha_hash = gerar_hash_senha(senha)
                 ativo_valor = 1 if ativo == "Sim" else 0
@@ -613,7 +767,7 @@ if st.session_state.get("mostrar_usuarios", False):
                 except sqlite3.IntegrityError:
                     st.error("⚠️ Email já cadastrado!")
                 except Exception as e:
-                    st.error(f"Erro ao salvar usuário: {e}")
+                    st.error(f"❌ Erro ao salvar usuário: {e}")
 
     # Exibir tabela de usuários com botões de ação
     st.markdown("### 📋 Usuários Cadastrados:")
@@ -628,7 +782,7 @@ if st.session_state.get("mostrar_usuarios", False):
             with col1:
                 st.write(f"👤 {row['nome']}")
             with col2:
-                st.write(f" {row['email']}")
+                st.write(row["email"])
             with col3:
                 status_text = "🟢 Ativo" if row["ativo"] == 1 else "🔴 Inativo"
                 st.write(status_text)
@@ -650,4 +804,39 @@ if st.session_state.get("mostrar_usuarios", False):
                         st.success(f"✅ Usuário '{row['nome']}' excluído.")
                         st.rerun()
     else:
-        st.info("Nenhum usuário cadastrado.")
+        st.info("ℹ️ Nenhum usuário cadastrado.")
+
+# === Página: Correção de Caixa ========================================================================================
+if st.session_state.get("mostrar_correcao_caixa", False):
+    st.subheader("🛠️ Correção Manual de Caixa")
+
+    data_corrigir = st.date_input("Data do Ajuste", value=date.today())
+    valor_ajuste = st.number_input("Valor de Correção (positivo ou negativo)", step=10.0, format="%.2f")
+    observacao = st.text_input("Motivo ou Observação", max_chars=200)
+
+    if st.button("💾 Salvar Ajuste Manual"):
+        try:
+            with sqlite3.connect(caminho_banco) as conn:
+                conn.execute("""
+                    INSERT INTO correcao_caixa (data, valor, observacao)
+                    VALUES (?, ?, ?)
+                """, (str(data_corrigir), valor_ajuste, observacao))
+                conn.commit()
+            st.success("✅ Ajuste salvo com sucesso!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao salvar correção: {e}")
+
+    st.markdown("### 📋 Ajustes Registrados")
+    try:
+        with sqlite3.connect(caminho_banco) as conn:
+            df_ajustes = pd.read_sql("SELECT * FROM correcao_caixa ORDER BY data DESC", conn)
+        if not df_ajustes.empty:
+            df_ajustes["valor"] = df_ajustes["valor"].apply(
+                lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+            st.dataframe(df_ajustes, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum ajuste registrado ainda.")
+    except Exception as e:
+        st.error(f"Erro ao carregar correções: {e}")
