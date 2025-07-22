@@ -148,6 +148,56 @@ def ultimo_dia_util(data_base):
         data -= timedelta(days=1)
     return data
 
+# === Função para calcular o valor líquido de vendas em cartão =========================================================
+def calcular_valor_liquido_cartao(df_entrada, data_base):
+    """
+    Filtra vendas em cartão do último dia útil anterior à data_base e calcula o valor líquido
+    com base nas taxas cadastradas.
+    """
+    cal = BrazilDistritoFederal()
+    data_util = ultimo_dia_util(data_base)
+
+    # Filtra entradas do último dia útil com cartão
+    df_cartao = df_entrada[
+        (df_entrada["Data"].dt.date == data_util) &
+        (df_entrada["Forma_de_Pagamento"].str.upper().isin(["CRÉDITO", "CREDITO", "DÉBITO", "DEBITO"]))
+    ].copy()
+
+    if df_cartao.empty:
+        return 0.0
+
+    # Normaliza as colunas para facilitar comparação com tabela de taxas
+    df_cartao["forma"] = df_cartao["Forma_de_Pagamento"].str.upper()
+    df_cartao["bandeira"] = df_cartao["Bandeira"].str.upper()
+    df_cartao["parcelas"] = pd.to_numeric(df_cartao["Parcelas"], errors="coerce").fillna(1).astype(int)
+
+    # Conecta ao banco para pegar as taxas
+    with sqlite3.connect(caminho_banco) as conn:
+        df_taxas = pd.read_sql("SELECT * FROM taxas_maquinas", conn)
+
+    if df_taxas.empty:
+        st.warning("⚠️ Nenhuma taxa de máquina cadastrada. Valor bruto será considerado.")
+        return df_cartao["Valor"].sum()
+
+    # Normaliza taxas
+    df_taxas["forma_pagamento"] = df_taxas["forma_pagamento"].str.upper()
+    df_taxas["bandeira"] = df_taxas["bandeira"].str.upper()
+
+    # Merge das entradas com as taxas
+    df_merge = pd.merge(
+        df_cartao,
+        df_taxas,
+        how="left",
+        left_on=["forma", "bandeira", "parcelas"],
+        right_on=["forma_pagamento", "bandeira", "parcelas"]
+    )
+
+    # Aplica taxa (caso não tenha taxa cadastrada, assume 0%)
+    df_merge["taxa_percentual"] = df_merge["taxa_percentual"].fillna(0)
+    df_merge["valor_liquido"] = df_merge["Valor"] * (1 - df_merge["taxa_percentual"] / 100)
+
+    return df_merge["valor_liquido"].sum()
+
 # === Inicializa estados padrão =======================================================================================
 estados_iniciais = {
     "mostrar_entradas": False,
@@ -287,38 +337,94 @@ elif opcao == "🧾 Lançamentos":
 
 # === Submenu: Fechamento de Caixa ================================================================================
 elif opcao == "💼 Fechamento de Caixa":
-  
+
     data_fechamento = st.date_input("Data do Fechamento", value=date.today())
     data_fechamento_str = str(data_fechamento)
     data_util_anterior = ultimo_dia_util(data_fechamento)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        banco_1 = st.number_input("Saldo Banco 1", min_value=0.0, step=10.0)
-    with col2:
-        banco_2 = st.number_input("Saldo Banco 2", min_value=0.0, step=10.0)
-    with col3:
-        banco_4 = st.number_input("Saldo Banco 4", min_value=0.0, step=10.0)
+    # === Carrega último fechamento salvo antes da data atual ===
+    def buscar_saldo_anterior(data_base):
+        with sqlite3.connect(caminho_banco) as conn:
+            df = pd.read_sql("SELECT * FROM fechamento_caixa WHERE data < ? ORDER BY data DESC LIMIT 1", conn, params=(str(data_base),))
+        if df.empty:
+            return 0.0, 0.0, 0.0, 0.0, 0.0
+        return (
+            df.iloc[0]["banco_1"],
+            df.iloc[0]["banco_2"],
+            df.iloc[0]["banco_4"],
+            df.iloc[0]["caixa_loja"],
+            df.iloc[0]["caixa_casa"]
+        )
 
-    col4, col5 = st.columns(2)
-    with col4:
-        caixa_loja = st.number_input("Caixa", min_value=0.0, step=10.0)
-    with col5:
-        caixa_casa = st.number_input("Caixa 2", min_value=0.0, step=10.0)
+    saldo_ant_banco1, saldo_ant_banco2, saldo_ant_banco4, saldo_ant_caixa, saldo_ant_caixa2 = buscar_saldo_anterior(data_fechamento)
 
-# === Entradas confirmadas (Pix/Dinheiro do dia + Crédito/Débito do D-1 útil) ===
+ # === Entradas confirmadas (Pix/Dinheiro do dia + Crédito/Débito do último dia útil com taxas) ===
     df_entrada = carregar_tabela("entrada")
     df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
 
-    df_confirmadas = df_entrada[
-        (
-            ((df_entrada["Forma_de_Pagamento"].astype(str).str.upper().isin(["PIX", "DINHEIRO"])) &
-            (df_entrada["Data"].dt.date == data_fechamento)) |
-            ((df_entrada["Forma_de_Pagamento"].astype(str).str.upper().isin(["CRÉDITO", "CREDITO", "DÉBITO", "DEBITO"])) &
-            (df_entrada["Data"].dt.date == data_util_anterior))
+    def calcular_valor_liquido_cartao(df_entrada, data_base):
+        cal = BrazilDistritoFederal()
+        data_util = ultimo_dia_util(data_base)
+
+        df_cartao = df_entrada[
+            (df_entrada["Data"].dt.date == data_util) &
+            (df_entrada["Forma_de_Pagamento"].str.upper().isin(["CRÉDITO", "CREDITO", "DÉBITO", "DEBITO"]))
+        ].copy()
+
+        if df_cartao.empty:
+            return 0.0
+
+        df_cartao["forma"] = df_cartao["Forma_de_Pagamento"].str.upper()
+        df_cartao["bandeira"] = df_cartao["Bandeira"].str.upper()
+        df_cartao["parcelas"] = pd.to_numeric(df_cartao["Parcelas"], errors="coerce").fillna(1).astype(int)
+
+        with sqlite3.connect(caminho_banco) as conn:
+            df_taxas = pd.read_sql("SELECT * FROM taxas_maquinas", conn)
+
+        if df_taxas.empty:
+            st.warning("⚠️ Nenhuma taxa cadastrada. Valor bruto será usado.")
+            return df_cartao["Valor"].sum()
+
+        df_taxas["forma_pagamento"] = df_taxas["forma_pagamento"].str.upper()
+        df_taxas["bandeira"] = df_taxas["bandeira"].str.upper()
+
+        df_merge = pd.merge(
+            df_cartao,
+            df_taxas,
+            how="left",
+            left_on=["forma", "bandeira", "parcelas"],
+            right_on=["forma_pagamento", "bandeira", "parcelas"]
         )
-    ]
-    total_entradas = df_confirmadas["Valor"].sum()
+
+        df_merge["taxa_percentual"] = df_merge["taxa_percentual"].fillna(0)
+        df_merge["valor_liquido"] = df_merge["Valor"] * (1 - df_merge["taxa_percentual"] / 100)
+
+        return df_merge["valor_liquido"].sum()
+
+    total_pix_dinheiro = df_entrada[
+        (df_entrada["Forma_de_Pagamento"].str.upper().isin(["PIX", "DINHEIRO"])) &
+        (df_entrada["Data"].dt.date == data_fechamento)
+    ]["Valor"].sum()
+
+    total_cartao_liquido = calcular_valor_liquido_cartao(df_entrada, data_fechamento)
+    total_entradas = total_pix_dinheiro + total_cartao_liquido
+
+    # === Sugestão automática dos bancos ===
+    sugerido_banco_1 = saldo_ant_banco1 + total_cartao_liquido
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        banco_1 = st.number_input("Saldo Banco 1", min_value=0.0, step=10.0, value=sugerido_banco_1)
+    with col2:
+        banco_2 = st.number_input("Saldo Banco 2", min_value=0.0, step=10.0, value=saldo_ant_banco2)
+    with col3:
+        banco_4 = st.number_input("Saldo Banco 4", min_value=0.0, step=10.0, value=saldo_ant_banco4)
+
+    col4, col5 = st.columns(2)
+    with col4:
+        caixa_loja = st.number_input("Caixa", min_value=0.0, step=10.0, value=saldo_ant_caixa)
+    with col5:
+        caixa_casa = st.number_input("Caixa 2", min_value=0.0, step=10.0, value=saldo_ant_caixa2)
 
     # === Saídas do dia ===
     df_saida = carregar_tabela("saida")
@@ -338,8 +444,14 @@ elif opcao == "💼 Fechamento de Caixa":
     valor_informado = banco_1 + banco_2 + banco_4 + caixa_loja + caixa_casa
     diferenca = valor_informado - saldo_esperado
 
-    # === Exibição do Resumo
+    # === Exibição do Resumo ===
     st.markdown("### 📊 Resumo do Fechamento do Dia")
+
+    # Detalhamento das entradas
+    st.markdown("#### 📥 Detalhamento das Entradas")
+    st.markdown(f"- 💸 Pix/Dinheiro de hoje: R$ {total_pix_dinheiro:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    st.markdown(f"- 💳 Cartão (líquido, do último dia útil): R$ {total_cartao_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(f"Entradas confirmadas: R$ {total_entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
@@ -351,47 +463,74 @@ elif opcao == "💼 Fechamento de Caixa":
     st.markdown(f"### 💰 Saldo Esperado: R$ {saldo_esperado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     st.markdown(f"### 💵 Valor Informado: R$ {valor_informado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-    if diferenca == 0:
-        st.success("✅ Caixa Correto! Não há diferença.")
+    # === Validação antes de salvar ===
+    if total_entradas <= 0 or valor_informado <= 0:
+        st.warning("⚠️ Entradas e valor informado não podem ser zero.")
     else:
-        cor = "🟢" if diferenca > 0 else "🔴"
-        st.warning(f"### {cor} Diferença: R$ {diferenca:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        if st.button("💾 Salvar Fechamento"):
+            try:
+                with sqlite3.connect(caminho_banco) as conn:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS fechamento_caixa (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            data TEXT NOT NULL,
+                            banco_1 REAL,
+                            banco_2 REAL,
+                            banco_4 REAL,
+                            caixa_loja REAL,
+                            caixa_casa REAL,
+                            entradas_confirmadas REAL,
+                            saidas REAL,
+                            correcao REAL,
+                            saldo_esperado REAL,
+                            valor_informado REAL,
+                            diferenca REAL
+                        )
+                    """)
 
-    if st.button("💾 Salvar Fechamento"):
-        try:
-            with sqlite3.connect(caminho_banco) as conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS fechamento_caixa (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        data TEXT NOT NULL,
-                        banco_1 REAL,
-                        banco_2 REAL,
-                        banco_4 REAL,
-                        caixa_loja REAL,
-                        caixa_casa REAL,
-                        entradas_confirmadas REAL,
-                        saidas REAL,
-                        correcao REAL,
-                        saldo_esperado REAL,
-                        valor_informado REAL,
-                        diferenca REAL
-                    )
-                """)
+                    conn.execute("""
+                        INSERT INTO fechamento_caixa (
+                            data, banco_1, banco_2, banco_4, caixa_loja, caixa_casa,
+                            entradas_confirmadas, saidas, correcao, saldo_esperado, valor_informado, diferenca
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(data_fechamento), banco_1, banco_2, banco_4, caixa_loja, caixa_casa,
+                        total_entradas, total_saidas, total_correcao,
+                        saldo_esperado, valor_informado, diferenca
+                    ))
+                    conn.commit()
+                st.success("✅ Fechamento salvo com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar: {e}")
 
-                conn.execute("""
-                    INSERT INTO fechamento_caixa (
-                        data, banco_1, banco_2, banco_4, caixa_loja, caixa_casa,
-                        entradas_confirmadas, saidas, correcao, saldo_esperado, valor_informado, diferenca
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(data_fechamento), banco_1, banco_2, banco_4, caixa_loja, caixa_casa,
-                    total_entradas, total_saidas, total_correcao,
-                    saldo_esperado, valor_informado, diferenca
-                ))
-                conn.commit()
-            st.success("✅ Fechamento salvo com sucesso!")
-        except Exception as e:
-            st.error(f"Erro ao salvar: {e}")
+    # === Histórico de fechamentos com filtro por data ===
+    st.markdown("### 📋 Fechamentos Anteriores")
+    try:
+        with sqlite3.connect(caminho_banco) as conn:
+            df_fechamentos = pd.read_sql("SELECT * FROM fechamento_caixa", conn)
+
+        df_fechamentos["data"] = pd.to_datetime(df_fechamentos["data"])
+
+        data_inicio = st.date_input("Filtrar de:", value=df_fechamentos["data"].min().date())
+        data_fim = st.date_input("até:", value=df_fechamentos["data"].max().date())
+
+        df_filtrado = df_fechamentos[(df_fechamentos["data"].dt.date >= data_inicio) & (df_fechamentos["data"].dt.date <= data_fim)]
+
+        if df_filtrado.empty:
+            st.info("Nenhum fechamento no período.")
+        else:
+            df_filtrado["data"] = df_filtrado["data"].dt.strftime("%d/%m/%Y")
+            df_filtrado["valor_informado"] = df_filtrado["valor_informado"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            df_filtrado["saldo_esperado"] = df_filtrado["saldo_esperado"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            df_filtrado["diferenca"] = df_filtrado["diferenca"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+            df_exibir = df_filtrado[["data", "valor_informado", "saldo_esperado", "diferenca"]]
+            df_exibir.columns = ["Data", "Valor Informado", "Saldo Esperado", "Diferença"]
+
+            st.dataframe(df_exibir, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar fechamentos anteriores: {e}")
 
 # === Submenu: Cadastro ============================================================================================
 elif opcao == "🛠️ Cadastro":
@@ -414,8 +553,214 @@ elif opcao == "🛠️ Cadastro":
 
 # === Página: Lançamentos do Dia =====================================================================================
 if st.session_state.get("mostrar_lancamentos_do_dia", False):
-    st.markdown("### 📅 Lançamentos do Dia")
-    st.info("Funcionalidade em desenvolvimento...")
+    st.markdown("## 📝 Lançamentos do Dia")
+
+# === Resumo do Lançamento do Dia ===================================================================================
+    df_entrada = carregar_tabela("entrada")
+
+    if not df_entrada.empty:
+        df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
+        entradas_hoje = df_entrada[df_entrada["Data"].dt.date == date.today()]
+        total_hoje = entradas_hoje["Valor"].sum()
+
+        st.success(f"💰 Total de Entradas de hoje ({date.today().strftime('%d/%m/%Y')}): R$ {total_hoje:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    else:
+        st.info("Ainda não há entradas registradas hoje.")
+
+# === Resumo das Saídas do Dia =======================================================================================
+    df_saida = carregar_tabela("saida")
+
+    if not df_saida.empty:
+        df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
+        saidas_hoje = df_saida[df_saida["Data"].dt.date == date.today()]
+        total_saidas_hoje = saidas_hoje["Valor"].sum()
+
+        st.error(f"📤 Total de Saídas de hoje ({date.today().strftime('%d/%m/%Y')}): R$ {total_saidas_hoje:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    else:
+        st.info("Ainda não há saídas registradas hoje.")
+    
+    # === Campos de cadastro de entrada e saída ========================================================================
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        st.markdown("### 📅 Data do Lançamento")
+    with col2:
+        data_lancamento = st.date_input("", value=date.today())
+    st.success("### 💼 Cadastrar Entrada")
+    valor_entrada = st.number_input("Valor", min_value=0.0, step=0.01, key="valor_entrada")
+    forma_pagamento = st.selectbox("Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"], key="forma_pagamento")
+
+    # === Definir campos condicionalmente ===
+    parcelas = 1
+    bandeira = ""
+
+    if forma_pagamento == "CRÉDITO":
+        parcelas = st.selectbox("Parcelas", list(range(1, 13)), key="parcelas")
+        bandeira = st.selectbox("Bandeira do Cartão (Crédito)", ["VISA", "MASTERCARD", "ELO", "AMEX", "DINERS CLUBE"], key="bandeira_credito")
+
+    elif forma_pagamento == "DÉBITO":
+        bandeira = st.selectbox("Bandeira do Cartão (Débito)", ["VISA", "MASTERCARD", "ELO"], key="bandeira_debito")
+
+    # === Cadastro de Entrada ===
+    confirmar = False
+    if valor_entrada > 0:
+        resumo = f"Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}"
+        st.info(f"✅ Confirme os dados da entrada: → {resumo}")
+        confirmar = st.checkbox("Está tudo certo com os dados acima?")
+
+    with st.form("form_entrada"):
+        submitted_entrada = st.form_submit_button("Salvar Entrada")
+
+        if submitted_entrada and confirmar:
+            if valor_entrada <= 0:
+                st.warning("⚠️ O valor deve ser maior que zero.")
+            else:
+                try:
+                    with sqlite3.connect(caminho_banco) as conn:
+                        conn.execute("""
+                            INSERT INTO entrada (Data, Valor, Forma_de_Pagamento, Parcelas, Bandeira)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            str(data_lancamento),
+                            float(valor_entrada),
+                            str(forma_pagamento).upper(),
+                            int(parcelas),
+                            str(bandeira).upper()
+                        ))
+                        conn.commit()
+                    st.success(f"✅ Entrada cadastrada com sucesso! → Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}")
+                except Exception as e:
+                    st.error(f"Erro ao salvar entrada: {e}")
+    
+    # === Cadastro de Saída ==============================================================================================
+    st.error("### 📤 Cadastrar Saída")
+
+    # Campos de entrada para saída
+    valor_saida = st.number_input("Valor da Saída", min_value=0.0, step=0.01, key="valor_saida")
+    forma_pagamento_saida = st.selectbox("Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"], key="forma_pagamento_saida")
+
+    parcelas_saida = 1
+    if forma_pagamento_saida == "CRÉDITO":
+        parcelas_saida = st.selectbox("Parcelas", list(range(1, 13)), key="parcelas_saida")
+
+    categoria_saida = st.text_input("Categoria")
+    subcategoria_saida = st.text_input("Subcategoria")
+    descricao_saida = st.text_input("Descricao")
+
+    # Confirmação visual
+    confirmar_saida = False
+    if valor_saida > 0:
+        resumo_saida = (
+            f"Valor: R$ {valor_saida:.2f}, Forma: {forma_pagamento_saida}, Parcelas: {parcelas_saida}, "
+            f"Categoria: {categoria_saida}, Subcategoria: {subcategoria_saida}, Descrição: {descricao_saida}"
+        )
+        st.info(f"✅ Confirme os dados da saída: → {resumo_saida}")
+        confirmar_saida = st.checkbox("Está tudo certo com os dados acima?", key="confirmar_saida")
+
+    # Botão de envio
+    with st.form("form_saida"):
+        submitted_saida = st.form_submit_button("Salvar Saída")
+
+        if submitted_saida and confirmar_saida:
+            try:
+                with sqlite3.connect(caminho_banco) as conn:
+                    conn.execute("""
+                        INSERT INTO saida (
+                            Data, Valor, Forma_de_Pagamento, Parcelas, Categoria, Sub_Categoria, Descricao
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(data_lancamento),
+                        valor_saida,
+                        forma_pagamento_saida.upper(),
+                        parcelas_saida,
+                        categoria_saida,
+                        subcategoria_saida,
+                        descricao_saida
+                    ))
+                    conn.commit()
+                st.success("✅ Saída cadastrada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar saída: {e}")
+
+    # === Cadastro de Mercadoria ===
+    st.markdown("### 📦 Cadastrar Mercadoria")
+    with st.form("form_mercadoria"):
+        colecao = st.text_input("Coleção")
+        fornecedor = st.text_input("Fornecedor")
+        valor_mercadoria = st.number_input("Valor das Mercadorias", min_value=0.0, step=0.01)
+        frete = st.number_input("Frete", min_value=0.0, step=0.01)
+        previsao_faturamento = st.number_input("Previsão de Faturamento", min_value=0.0, step=0.01)
+        faturamento = st.number_input("Faturamento", min_value=0.0, step=0.01)
+        previsao_recebimento = st.number_input("Previsão de Recebimento", min_value=0.0, step=0.01)
+        recebimento = st.number_input("Recebimento", min_value=0.0, step=0.01)
+        pedido = st.text_input("Número do Pedido")
+        nota_fiscal = st.text_input("Número da Nota Fiscal")
+        submitted_mercadoria = st.form_submit_button("Salvar Mercadoria")
+
+        if submitted_mercadoria:
+            try:
+                with sqlite3.connect(caminho_banco) as conn:
+                    conn.execute("""
+                        INSERT INTO mercadorias (
+                            Data, Colecao, Fornecedor, Valor_Mercadoria, Frete,
+                            Previsao_Faturamento, Faturamento, Previsao_Recebimento, Recebimento,
+                            Pedido, Nota_Fiscal)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (str(data_lancamento), colecao, fornecedor, valor_mercadoria, frete,
+                          previsao_faturamento, faturamento, previsao_recebimento, recebimento,
+                          pedido, nota_fiscal))
+                    conn.commit()
+                st.success("✅ Mercadoria cadastrada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar mercadoria: {e}")
+
+    # === Resumo do Dia (Entradas, Saídas, Mercadorias) ===
+    st.markdown("## 📊 Resumo do Dia")
+
+    filtro_data = data_lancamento
+
+    try:
+        df_entrada = carregar_tabela("entrada")
+        df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
+        entradas_dia = df_entrada[df_entrada["Data"].dt.date == filtro_data]
+
+        st.markdown("### 💸 Entradas do Dia")
+        if entradas_dia.empty:
+            st.info("Nenhuma entrada registrada para esse dia.")
+        else:
+            st.dataframe(entradas_dia[["Data", "Forma_de_Pagamento", "Valor", "Parcelas", "Bandeira",]], use_container_width=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar entradas: {e}")
+
+    try:
+        df_saida = carregar_tabela("saida")
+        df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
+        saidas_dia = df_saida[df_saida["Data"].dt.date == filtro_data]
+
+        st.markdown("### 💼 Saídas do Dia")
+        if saidas_dia.empty:
+            st.info("Nenhuma saída registrada para esse dia.")
+        else:
+            st.dataframe(saidas_dia[["Data", "Categoria", "Valor", "Descricao"]], use_container_width=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar saídas: {e}")
+
+    try:
+        df_mercadoria = carregar_tabela("mercadorias")
+        df_mercadoria["Data"] = pd.to_datetime(df_mercadoria["Data"], errors="coerce")
+        mercadorias_dia = df_mercadoria[df_mercadoria["Data"].dt.date == filtro_data]
+
+        st.markdown("### 📦 Mercadorias do Dia")
+        if mercadorias_dia.empty:
+            st.info("Nenhuma mercadoria registrada para esse dia.")
+        else:
+            st.dataframe(mercadorias_dia[[
+                "Data", "Colecao", "Fornecedor", "Valor_Mercadoria", "Frete",
+                "Previsao_Faturamento", "Faturamento", "Previsao_Recebimento", "Recebimento",
+                "Pedido", "Nota_Fiscal"]], use_container_width=True)
+    except Exception as e:
+        st.error(f"Erro ao carregar mercadorias: {e}")
 
 # === Página: Entradas ==============================================================================================
 if st.session_state.get("mostrar_entradas", False):
