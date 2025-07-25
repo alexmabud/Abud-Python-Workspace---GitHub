@@ -7,6 +7,7 @@ import re
 from datetime import date
 from workalendar.america import BrazilDistritoFederal
 from datetime import timedelta
+import plotly.graph_objects as go
 
 # === CSS personalizado ============================================================================================
 st.markdown("""
@@ -225,6 +226,42 @@ def carregar_cartoes_credito():
 
     return df_merge["valor_liquido"].sum()
 
+# === Função para adicionar coluna de dia da semana ao DataFrame ====================================================
+def adicionar_dia_semana(df):
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+    df["Dia_Semana"] = df["Data"].dt.day_name()
+    traducao = {
+        "Monday": "segunda",
+        "Tuesday": "terca",
+        "Wednesday": "quarta",
+        "Thursday": "quinta",
+        "Friday": "sexta",
+        "Saturday": "sabado",
+        "Sunday": "domingo"
+    }
+    df["Dia_Semana"] = df["Dia_Semana"].map(traducao)
+    return df
+
+# === Função para gerar gráfico de meta percentual ==================================================================
+def grafico_meta_percentual(titulo, percentual):
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=percentual,
+        number={'suffix': "%"},
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': titulo, 'font': {'size': 18}},
+        gauge={
+            'axis': {'range': [0, 100]},
+            'bar': {'color': "#1f77b4"},
+            'steps': [
+                {'range': [0, 50], 'color': "#FFCDD2"},
+                {'range': [50, 80], 'color': "#FFF9C4"},
+                {'range': [80, 100], 'color': "#C8E6C9"}
+            ]
+        }
+    ))
+    return fig
+
 # === Inicializa estados padrão =======================================================================================
 estados_iniciais = {
     "mostrar_entradas": False,
@@ -319,8 +356,139 @@ if st.session_state["pagina_atual"] != opcao:
 st.title(opcao)
 
 # === Submenu: Metas ================================================================================================
+# === Submenu: Metas ================================================================================================
 if opcao == "🎯 Metas":
-    st.markdown("🎯 Metas em desenvolvimento...")
+    # === Carregamento inicial ======================================================================================
+    df_entrada = carregar_tabela("entrada")
+    df_entrada = adicionar_dia_semana(df_entrada)
+    df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
+    df_entrada["Usuario"] = df_entrada.get("Usuario", "LOJA").fillna("LOJA")
+
+    hoje = date.today()
+    inicio_semana = hoje - timedelta(days=hoje.weekday())
+    inicio_mes = hoje.replace(day=1)
+    dia_str = hoje.strftime('%A').lower()
+    traducao_dias = {
+        "monday": "segunda", "tuesday": "terca", "wednesday": "quarta",
+        "thursday": "quinta", "friday": "sexta", "saturday": "sabado", "sunday": "domingo"
+    }
+    coluna_dia = traducao_dias.get(dia_str, "segunda")
+
+    with sqlite3.connect(caminho_banco) as conn:
+        df_metas = pd.read_sql("SELECT * FROM metas", conn)
+
+    # === Entradas da Loja ==========================================================================================
+    st.markdown("### 🏪 Entradas da Loja")
+    df_loja = df_entrada.copy()
+
+    total_dia = df_loja[df_loja["Data"].dt.date == hoje]["Valor"].sum()
+    total_semana = df_loja[df_loja["Data"].dt.date >= inicio_semana]["Valor"].sum()
+    total_mes = df_loja[df_loja["Data"].dt.date >= inicio_mes]["Valor"].sum()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 Entrada do Dia", f"R$ {total_dia:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    col2.metric("📆 Entrada da Semana", f"R$ {total_semana:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    col3.metric("🗓️ Entrada do Mês", f"R$ {total_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    # === Metas da Loja =============================================================================================
+    st.markdown("### 🎯 Metas da Loja")
+    metas_loja = df_metas[df_metas["vendedor"].str.upper() == "LOJA"]
+
+    meta_dia = metas_loja[coluna_dia].max() if coluna_dia in metas_loja.columns else 0
+    meta_semana = metas_loja["semanal"].max() if "semanal" in metas_loja.columns else 0
+    meta_mes = metas_loja["mensal"].max() if "mensal" in metas_loja.columns else 0
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("🎯 Meta do Dia", f"R$ {meta_dia:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    col2.metric("📊 Meta da Semana", f"R$ {meta_semana:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    col3.metric("📈 Meta do Mês", f"R$ {meta_mes:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    # === Gráficos por Vendedor =====================================================================================
+    for i, vendedor in enumerate(df_entrada["Usuario"].unique()):
+        st.markdown(f"<h5 style='margin: 5px 0 -25px;'>👤 {vendedor}</h5>", unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns(4)
+
+        entradas_vend = df_entrada[df_entrada["Usuario"] != "LOJA"] if vendedor.upper() == "LOJA" else df_entrada[df_entrada["Usuario"] == vendedor]
+        valor_dia = entradas_vend[entradas_vend["Data"].dt.date == hoje]["Valor"].sum()
+        valor_semana = entradas_vend[entradas_vend["Data"].dt.date >= inicio_semana]["Valor"].sum()
+        valor_mes = entradas_vend[entradas_vend["Data"].dt.date >= inicio_mes]["Valor"].sum()
+
+        if vendedor.upper() == "LOJA":
+            metas = metas_loja
+        else:
+            with sqlite3.connect(caminho_banco) as conn:
+                cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (vendedor.upper(),))
+                id_usuario = cursor.fetchone()
+                metas = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
+
+        meta_dia_vend = metas[coluna_dia].max() if coluna_dia in metas else 0
+        meta_semana_vend = metas["semanal"].max() if "semanal" in metas else 0
+        meta_mes_vend = metas["mensal"].max() if "mensal" in metas else 0
+
+        perc_dia = (valor_dia / meta_dia_vend * 100) if meta_dia_vend else 0
+        perc_semana = (valor_semana / meta_semana_vend * 100) if meta_semana_vend else 0
+        perc_mes = (valor_mes / meta_mes_vend * 100) if meta_mes_vend else 0
+
+        col1.plotly_chart(grafico_meta_percentual("Meta do Dia", round(perc_dia, 1)), use_container_width=True)
+        col2.plotly_chart(grafico_meta_percentual("Meta da Semana", round(perc_semana, 1)), use_container_width=True)
+        col3.plotly_chart(grafico_meta_percentual("Meta do Mês", round(perc_mes, 1)), use_container_width=True)
+
+        # Nível da Meta
+        nivel_atual, cor = "Nenhum", "#B0BEC5"
+        if not metas.empty:
+            ouro = metas.get("meta_ouro", [0]).max()
+            prata = metas.get("meta_prata", [0]).max()
+            bronze = metas.get("meta_bronze", [0]).max()
+            if perc_mes >= ouro: nivel_atual, cor = "🥇 Ouro", "#FFD700"
+            elif perc_mes >= prata: nivel_atual, cor = "🥈 Prata", "#C0C0C0"
+            elif perc_mes >= bronze: nivel_atual, cor = "🥉 Bronze", "#CD7F32"
+
+        fig_nivel = go.Figure(go.Indicator(
+            mode="gauge+number+delta",
+            value=perc_mes,
+            number={'suffix': "%", 'font': {'size': 22}},
+            title={'text': f"Nível da Meta<br><b>{nivel_atual}</b>", 'font': {'size': 16}},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': cor},
+                'steps': [{'range': [0, 100], 'color': "#ECEFF1"}]
+            }
+        ))
+        col4.plotly_chart(fig_nivel, use_container_width=True)
+
+        if i < len(df_entrada["Usuario"].unique()) - 1:
+            st.markdown("<div style='margin-top: -35px;'></div>", unsafe_allow_html=True)
+
+    # === Comparativo Final =========================================================================================
+    st.markdown("### 📈 Vendas de Hoje vs Metas")
+    entradas_hoje = df_entrada[df_entrada["Data"].dt.date == hoje]
+    if entradas_hoje.empty:
+        st.info("Nenhuma entrada registrada hoje.")
+    else:
+        entradas_v = entradas_hoje.groupby("Usuario")["Valor"].sum().reset_index()
+        entradas_v["Usuario"] = entradas_v["Usuario"].str.upper()
+        df_metas["vendedor"] = df_metas["vendedor"].str.upper()
+
+        comparativo = pd.merge(entradas_v, df_metas, how="left", left_on="Usuario", right_on="vendedor")
+        comparativo["Meta_Dia"] = comparativo[coluna_dia].fillna(0)
+        comparativo["% da Meta"] = (comparativo["Valor"] / comparativo["Meta_Dia"]) * 100
+        comparativo["% da Meta"] = comparativo["% da Meta"].fillna(0).round(1)
+
+        # Formata os valores
+        comparativo["Valor"] = comparativo["Valor"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        comparativo["Meta_Dia"] = comparativo["Meta_Dia"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        comparativo["% da Meta"] = comparativo["% da Meta"].apply(lambda x: f"{x:.1f}%")
+
+        st.dataframe(
+            comparativo[["Usuario", "Valor", "Meta_Dia", "% da Meta"]].rename(columns={
+                "Usuario": "Vendedor",
+                "Valor": "Total Vendido",
+                "Meta_Dia": f"Meta de {coluna_dia.capitalize()}",
+                "% da Meta": "% Atingido"
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
 
 # === Submenu: Dashboard ============================================================================================
 elif opcao == "📊 Dashboard":
@@ -686,17 +854,21 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
             else:
                 try:
                     with sqlite3.connect(caminho_banco) as conn:
+                        usuario = st.session_state.usuario_logado["nome"]  # ← nome de quem está logado
+
                         conn.execute("""
-                            INSERT INTO entrada (Data, Valor, Forma_de_Pagamento, Parcelas, Bandeira)
-                            VALUES (?, ?, ?, ?, ?)
+                            INSERT INTO entrada (Data, Valor, Forma_de_Pagamento, Parcelas, Bandeira, Usuario)
+                            VALUES (?, ?, ?, ?, ?, ?)
                         """, (
                             str(data_lancamento),
                             float(valor_entrada),
                             str(forma_pagamento).upper(),
                             int(parcelas),
-                            str(bandeira).upper()
+                            str(bandeira).upper(),
+                            usuario
                         ))
                         conn.commit()
+
                     st.success(f"✅ Entrada cadastrada com sucesso! → Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}")
                 except Exception as e:
                     st.error(f"Erro ao salvar entrada: {e}")
@@ -1512,43 +1684,84 @@ if st.session_state.get("mostrar_cadastro_caixa", False) and perfil_usuario == "
     except Exception as e:
         st.error(f"Erro ao carregar: {e}")
 
-# === Página: Cadastro de Metas ========================================================================
+# === Página: Cadastro de Metas (com níveis ouro, prata e bronze) ===================================================
 if perfil_usuario in ["Administrador", "Gerente"] and st.session_state.get("mostrar_cadastro_meta", False):
     st.markdown("## 🎯 Cadastro de Metas")
 
     # Carrega os usuários ativos
     try:
         with sqlite3.connect(caminho_banco) as conn:
-            df_usuarios = pd.read_sql("SELECT nome FROM usuarios WHERE ativo = 1", conn)
-        lista_usuarios = ["LOJA"] + df_usuarios["nome"].tolist()
+            df_usuarios = pd.read_sql("SELECT id, nome FROM usuarios WHERE ativo = 1", conn)
+        lista_usuarios = [("LOJA", 0)] + list(zip(df_usuarios["nome"], df_usuarios["id"]))
     except Exception as e:
         st.error(f"Erro ao carregar usuários: {e}")
-        lista_usuarios = ["LOJA"]
+        lista_usuarios = [("LOJA", 0)]
 
-    tipo_meta = st.selectbox("Tipo de Meta", ["diária", "semanal", "mensal"])
-    nivel_meta = st.selectbox("Nível da Meta", ["ouro", "prata", "bronze"])
-    valor_meta = st.number_input("Valor da Meta (R$)", min_value=0.0, step=10.0, format="%.2f")
-    vendedor_meta = st.selectbox("Vendedor", lista_usuarios)
+    nomes = [nome for nome, _ in lista_usuarios]
+    vendedor_selecionado = st.selectbox("Selecione o Vendedor ou 'LOJA'", nomes)
+    id_usuario = dict(lista_usuarios)[vendedor_selecionado]
 
-    if tipo_meta == "diária":
-        data_ref = st.date_input("Data da Meta (dia específico)", value=date.today(), key="meta_data_dia")
-    elif tipo_meta == "semanal":
-        data_ref = st.date_input("Data de Referência da Semana (segunda-feira)", value=date.today(), key="meta_data_semana")
-    else:
-        data_ref = st.date_input("Data de Referência do Mês (dia 01)", value=date.today().replace(day=1), key="meta_data_mes")
+    st.markdown("### 🗓️ Metas por Dia da Semana")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        segunda = st.number_input("Segunda", min_value=0.0, step=10.0, format="%.2f")
+        terca = st.number_input("Terça", min_value=0.0, step=10.0, format="%.2f")
+        quarta = st.number_input("Quarta", min_value=0.0, step=10.0, format="%.2f")
+    with col2:
+        quinta = st.number_input("Quinta", min_value=0.0, step=10.0, format="%.2f")
+        sexta = st.number_input("Sexta", min_value=0.0, step=10.0, format="%.2f")
+        sabado = st.number_input("Sábado", min_value=0.0, step=10.0, format="%.2f")
+    with col3:
+        domingo = st.number_input("Domingo", min_value=0.0, step=10.0, format="%.2f")
+        semanal = st.number_input("Meta Semanal", min_value=0.0, step=50.0, format="%.2f")
+        mensal = st.number_input("Meta Mensal", min_value=0.0, step=100.0, format="%.2f")
 
-    if st.button("💾 Salvar Meta"):
+    st.markdown("### 🥇 Metas por Nível")
+    col_n1, col_n2, col_n3 = st.columns(3)
+    with col_n1:
+        meta_ouro = st.number_input("Meta Ouro", min_value=0.0, step=100.0, format="%.2f")
+    with col_n2:
+        meta_prata = st.number_input("Meta Prata", min_value=0.0, step=100.0, format="%.2f")
+    with col_n3:
+        meta_bronze = st.number_input("Meta Bronze", min_value=0.0, step=100.0, format="%.2f")
+
+    if st.button("💾 Salvar Metas"):
         try:
             with sqlite3.connect(caminho_banco) as conn:
-                conn.execute("""
-                    INSERT INTO metas (tipo, nivel, valor, data_referencia, vendedor)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (tipo_meta, nivel_meta, valor_meta, str(data_ref), vendedor_meta))
+                # Verifica se já existe meta para esse id_usuario
+                cursor = conn.execute("SELECT id FROM metas WHERE id_usuario = ?", (id_usuario,))
+                existe = cursor.fetchone()
+
+                if existe:
+                    conn.execute("""
+                        UPDATE metas SET 
+                            segunda = ?, terca = ?, quarta = ?, quinta = ?, sexta = ?, 
+                            sabado = ?, domingo = ?, semanal = ?, mensal = ?,
+                            meta_ouro = ?, meta_prata = ?, meta_bronze = ?,
+                            vendedor = ?
+                        WHERE id_usuario = ?
+                    """, (
+                        segunda, terca, quarta, quinta, sexta,
+                        sabado, domingo, semanal, mensal,
+                        meta_ouro, meta_prata, meta_bronze,
+                        vendedor_selecionado.upper(),  # força padronização
+                        id_usuario
+                    ))
+                else:
+                    conn.execute("""
+                        INSERT INTO metas (
+                            id_usuario, vendedor, segunda, terca, quarta, quinta, sexta, sabado, domingo,
+                            semanal, mensal, meta_ouro, meta_prata, meta_bronze
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        id_usuario, vendedor_selecionado.upper(), segunda, terca, quarta, quinta, sexta, sabado, domingo,
+                        semanal, mensal, meta_ouro, meta_prata, meta_bronze
+                    ))
                 conn.commit()
-            st.success("✅ Meta cadastrada com sucesso!")
+            st.success("✅ Metas salvas com sucesso!")
             st.rerun()
         except Exception as e:
-            st.error(f"Erro ao salvar meta: {e}")
+            st.error(f"Erro ao salvar metas: {e}")
 
     # === Visualização das Metas Cadastradas ===
     st.markdown("---")
@@ -1556,17 +1769,21 @@ if perfil_usuario in ["Administrador", "Gerente"] and st.session_state.get("most
 
     try:
         with sqlite3.connect(caminho_banco) as conn:
-            df_metas = pd.read_sql("SELECT * FROM metas ORDER BY data_referencia DESC", conn)
-        if df_metas.empty:
-            st.info("Nenhuma meta cadastrada ainda.")
-        else:
-            df_metas["valor"] = df_metas["valor"].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            st.dataframe(df_metas.rename(columns={
-                "tipo": "Tipo",
-                "nivel": "Nível",
-                "valor": "Valor",
-                "data_referencia": "Data de Referência",
-                "vendedor": "Vendedor"
-            }), use_container_width=True)
+            df_metas = pd.read_sql("""
+                SELECT COALESCE(u.nome, m.vendedor, 'LOJA') AS Vendedor, 
+                       m.segunda, m.terca, m.quarta, m.quinta, m.sexta, 
+                       m.sabado, m.domingo, m.semanal, m.mensal,
+                       m.meta_ouro, m.meta_prata, m.meta_bronze
+                FROM metas m
+                LEFT JOIN usuarios u ON m.id_usuario = u.id
+                ORDER BY Vendedor
+            """, conn)
+
+        for col in df_metas.columns:
+            if col != "Vendedor":
+                df_metas[col] = df_metas[col].apply(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+        st.dataframe(df_metas, use_container_width=True, hide_index=True)
+
     except Exception as e:
         st.error(f"Erro ao carregar metas: {e}")
