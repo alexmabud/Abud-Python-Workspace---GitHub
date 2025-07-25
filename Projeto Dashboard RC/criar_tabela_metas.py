@@ -5,17 +5,24 @@ import os
 caminho_data = os.path.join(os.path.dirname(__file__), 'data')
 caminho_banco = os.path.join(caminho_data, 'dashboard_rc.db')
 
-# Cria a nova tabela de metas com coluna 'vendedor'
+# Cria a nova tabela de metas por usuário com dias da semana + semanal e mensal
 def criar_tabela_metas():
     with sqlite3.connect(caminho_banco) as conn:
+        conn.execute("DROP TABLE IF EXISTS metas")  # Apaga a tabela antiga, se existir
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS metas (
+            CREATE TABLE metas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo TEXT,             -- 'diária', 'semanal', 'mensal'
-                nivel TEXT,            -- 'ouro', 'prata', 'bronze'
-                valor REAL,
-                data_referencia DATE,  -- para diária: o dia; para semanal: segunda-feira da semana; para mensal: dia 01 do mês
-                vendedor TEXT DEFAULT 'LOJA'  -- Pode ser nome do vendedor ou 'LOJA' para metas gerais
+                id_usuario INTEGER NOT NULL,
+                segunda REAL DEFAULT 0.0,
+                terca REAL DEFAULT 0.0,
+                quarta REAL DEFAULT 0.0,
+                quinta REAL DEFAULT 0.0,
+                sexta REAL DEFAULT 0.0,
+                sabado REAL DEFAULT 0.0,
+                domingo REAL DEFAULT 0.0,
+                semanal REAL DEFAULT 0.0,
+                mensal REAL DEFAULT 0.0,
+                FOREIGN KEY (id_usuario) REFERENCES usuarios(id)
             );
         """)
         conn.commit()
