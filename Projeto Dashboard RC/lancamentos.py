@@ -150,44 +150,61 @@ def ultimo_dia_util(data_base):
         data -= timedelta(days=1)
     return data
 
-# === Função para calcular o valor líquido de vendas em cartão =========================================================
+# === Função: Cálculo do valor líquido das vendas em cartão ========================================================
 def calcular_valor_liquido_cartao(df_entrada, data_base):
-    cal = BrazilDistritoFederal()
-    data_util = ultimo_dia_util(data_base)
+    dias_para_considerar = []
+    dia_anterior = data_base - timedelta(days=1)
+
+    while not cal.is_working_day(dia_anterior):
+        dias_para_considerar.append(dia_anterior)
+        dia_anterior -= timedelta(days=1)
+
+    dias_para_considerar.append(dia_anterior)
 
     df_cartao = df_entrada[
-        (df_entrada["Data"].dt.date == data_util) &
-        (df_entrada["Forma_de_Pagamento"].str.upper().isin(["CRÉDITO", "CREDITO", "DÉBITO", "DEBITO"]))
-    ].copy()
+        (df_entrada["Forma_de_Pagamento"].str.upper().isin(["DÉBITO", "CRÉDITO"])) &
+        (df_entrada["Data"].dt.date.isin([d for d in dias_para_considerar]))
+    ]
 
-    if df_cartao.empty:
-        return 0.0
+    total_liquido = 0.0
 
-    df_cartao["forma"] = df_cartao["Forma_de_Pagamento"].str.upper()
-    df_cartao["bandeira"] = df_cartao["Bandeira"].str.upper()
-    df_cartao["parcelas"] = pd.to_numeric(df_cartao["Parcelas"], errors="coerce").fillna(1).astype(int)
+    mapeamento_bandeiras = {
+        "MASTERCARD": "MASTER",
+        "MASTER": "MASTER",
+        "DINERS CLUB": "DINERSCLUB",
+        "DINERSCLUB": "DINERSCLUB",
+        "DINERS": "DINERSCLUB",
+        "AMEX": "AMEX",
+        "ELO": "ELO",
+        "VISA": "VISA"
+    }
 
-    with sqlite3.connect(caminho_banco) as conn:
-        df_taxas = pd.read_sql("SELECT * FROM taxas_maquinas", conn)
+    bandeira = mapeamento_bandeiras.get(bandeira, bandeira)  # Corrige o nome antes de consultar o banco
 
-    if df_taxas.empty:
-        return df_cartao["Valor"].sum()
+    for _, row in df_cartao.iterrows():
+        valor = row["Valor"]
+        forma = row["Forma_de_Pagamento"].upper().strip()
+        bandeira_input = str(row.get("Bandeira", "")).upper().strip()
+        parcelas = int(row.get("Parcelas", 1))
 
-    df_taxas["forma_pagamento"] = df_taxas["forma_pagamento"].str.upper()
-    df_taxas["bandeira"] = df_taxas["bandeira"].str.upper()
+        # Aplica o mapeamento, se existir
+        bandeira = mapeamento_bandeiras.get(bandeira_input, bandeira_input)
 
-    df_merge = pd.merge(
-        df_cartao,
-        df_taxas,
-        how="left",
-        left_on=["forma", "bandeira", "parcelas"],
-        right_on=["forma_pagamento", "bandeira", "parcelas"]
-    )
+        with sqlite3.connect(caminho_banco) as conn:
+            cursor = conn.execute("""
+                SELECT taxa_percentual
+                FROM taxas_maquinas
+                WHERE UPPER(forma_pagamento) = ? 
+                AND UPPER(bandeira) = ? 
+                AND parcelas = ?
+            """, (forma, bandeira, parcelas))
+            resultado = cursor.fetchone()
 
-    df_merge["taxa_percentual"] = df_merge["taxa_percentual"].fillna(0)
-    df_merge["valor_liquido"] = df_merge["Valor"] * (1 - df_merge["taxa_percentual"] / 100)
+        taxa = resultado[0] if resultado else 0.0
+        valor_liquido = valor * (1 - taxa / 100)
+        total_liquido += valor_liquido
 
-    return df_merge["valor_liquido"].sum()
+    return round(total_liquido, 2)
 
 # === Função para carregar cartões de crédito (com fechamento) ===
 def carregar_cartoes_credito():
@@ -406,27 +423,68 @@ if opcao == "🎯 Metas":
 
     df_metas = carregar_metas()
 
-    # === Entradas da Loja =========================================================================================
-    st.markdown("### 🏪 Vendas da Loja")
+    # Calcula os valores
     df_loja = df_entrada.copy()
     total_dia = df_loja[df_loja["Data"].dt.date == hoje]["Valor"].sum()
     total_semana = df_loja[df_loja["Data"].dt.date >= inicio_semana]["Valor"].sum()
     total_mes = df_loja[df_loja["Data"].dt.date >= inicio_mes]["Valor"].sum()
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Vendas do Dia", formatar_valor(total_dia))
-    col2.metric("Vendas da Semana", formatar_valor(total_semana))
-    col3.metric("Vendas do Mês", formatar_valor(total_mes))
+    # Exibe tudo em um retângulo
+    st.markdown(f"""
+    <div style='
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 20px;
+        background-color: #1c1c1c;
+        margin-bottom: 20px;
+    '>
+        <h4 style='color: white;'>🏪 Vendas da Loja</h4>
+        <div style='display: flex; justify-content: space-between; margin-top: 15px;'>
+            <div style='text-align: center; width: 32%;'>
+                <div style='color: #ccc; font-weight: bold;'>Vendas do Dia</div>
+                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(total_dia)}</div>
+            </div>
+            <div style='text-align: center; width: 32%;'>
+                <div style='color: #ccc; font-weight: bold;'>Vendas da Semana</div>
+                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(total_semana)}</div>
+            </div>
+            <div style='text-align: center; width: 32%;'>
+                <div style='color: #ccc; font-weight: bold;'>Vendas do Mês</div>
+                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(total_mes)}</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # === Metas da Loja ============================================================================================
-    st.markdown("### 🎯 Metas da Loja")
     metas_loja = df_metas[df_metas["vendedor"].str.upper() == "LOJA"]
     meta_dia, meta_semana, meta_mes, _, _, _ = extrair_metas(metas_loja, coluna_dia)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Meta do Dia", formatar_valor(meta_dia))
-    col2.metric("Meta da Semana", formatar_valor(meta_semana))
-    col3.metric("📈 Meta do Mês", formatar_valor(meta_mes))
+    st.markdown(f"""
+    <div style='
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 20px;
+        background-color: #1c1c1c;
+        margin-bottom: 20px;
+    '>
+        <h4 style='color: white;'>🎯 Metas da Loja</h4>
+        <div style='display: flex; justify-content: space-between; margin-top: 15px;'>
+            <div style='text-align: center; width: 32%;'>
+                <div style='color: #ccc; font-weight: bold;'>Meta do Dia</div>
+                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(meta_dia)}</div>
+            </div>
+            <div style='text-align: center; width: 32%;'>
+                <div style='color: #ccc; font-weight: bold;'>Meta da Semana</div>
+                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(meta_semana)}</div>
+            </div>
+            <div style='text-align: center; width: 32%;'>
+                <div style='color: #ccc; font-weight: bold;'>Meta do Mês</div>
+                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(meta_mes)}</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # === Mensagem de Comissão por Perfil =========================================================================
     usuario_logado = st.session_state.usuario_logado.get("nome", "").upper()
@@ -436,6 +494,18 @@ if opcao == "🎯 Metas":
         usuarios_para_mostrar = df_metas[df_metas["vendedor"].str.upper() != "LOJA"]["vendedor"].unique()
     else:
         usuarios_para_mostrar = [usuario_logado]
+
+    # Início do retângulo visual de comissões
+    comissoes_html = """
+    <div style='
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 20px;
+        background-color: #1c1c1c;
+        margin-bottom: 20px;
+    '>
+        <h4 style='color: white;'>💰 Comissões</h4>
+    """
 
     for nome in usuarios_para_mostrar:
         nome_upper = nome.upper()
@@ -460,15 +530,19 @@ if opcao == "🎯 Metas":
 
         if nivel:
             valor_comissao = (valor_mes * perc_comissao) / 100
-            msg = f"Comissão: **{perc_comissao:.1f}%** = {formatar_valor(valor_comissao)}"
+            msg = f"Comissão: <b>{perc_comissao:.1f}%</b> = <span style='color:#00FFAA'>{formatar_valor(valor_comissao)}</span>"
             if nome_upper == usuario_logado:
-                st.success(f"Você bateu a meta **{nivel}**. {msg}")
+                comissoes_html += f"<div style='color: #00FFAA; margin-bottom: 10px;'>✅ Você bateu a meta <b>{nivel}</b>. {msg}</div>"
             else:
-                st.info(f"👤 **{nome}** bateu a meta **{nivel}** — {msg}")
+                comissoes_html += f"<div style='color: #ccc; margin-bottom: 10px;'>👤 <b>{nome}</b> bateu a meta <b>{nivel}</b> — {msg}</div>"
         elif nome_upper == usuario_logado:
-            st.warning("Você ainda não bateu a **meta do mês**.")
+            comissoes_html += "<div style='color: orange; margin-bottom: 10px;'>⚠️ Você ainda não bateu a <b>meta do mês</b>.</div>"
         elif perfil_logado != "Vendedor":
-            st.info(f"👤 **{nome}** ainda não bateu a meta do mês.")
+            comissoes_html += f"<div style='color: #888; margin-bottom: 10px;'>👤 <b>{nome}</b> ainda não bateu a meta do mês.</div>"
+
+    comissoes_html += "</div>"
+
+    st.markdown(comissoes_html, unsafe_allow_html=True)
 
     # === Gráficos por Vendedor ====================================================================================
     usuarios_unicos = ["LOJA"] + sorted([u for u in df_entrada["Usuario"].unique() if u.upper() != "LOJA"])
@@ -525,6 +599,41 @@ if opcao == "🎯 Metas":
         col3.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key=f"grafico_mes_{i}")
         col4.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key=f"grafico_nivel_{i}")
 
+    # === Renderiza manualmente o gráfico do VendedorTeste após todos os outros (para Gerente) ==========================
+    if perfil_logado == "Gerente":
+        vendedor_especifico = "VendedorTeste"
+        nome_upper = vendedor_especifico.upper()
+
+        df_user = df_entrada[df_entrada["Usuario"].str.upper() == nome_upper]
+        with sqlite3.connect(caminho_banco) as conn:
+            cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (nome_upper,))
+            id_usuario = cursor.fetchone()
+            metas = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
+
+        valor_dia = df_user[df_user["Data"].dt.date == hoje]["Valor"].sum()
+        valor_semana = df_user[df_user["Data"].dt.date >= inicio_semana]["Valor"].sum()
+        valor_mes = df_user[df_user["Data"].dt.date >= inicio_mes]["Valor"].sum()
+
+        meta_dia, meta_semana, meta_mes, ouro, prata, bronze = extrair_metas(metas, coluna_dia)
+
+        perc_dia = calcular_percentual(valor_dia, meta_dia)
+        perc_semana = calcular_percentual(valor_semana, meta_semana)
+        perc_mes = calcular_percentual(valor_mes, meta_mes)
+
+        nivel_atual, cor = "Nenhum", "#B0BEC5"
+        if valor_mes >= ouro:
+            nivel_atual, cor = "🥇 Ouro", "#FFD700"
+        elif valor_mes >= prata:
+            nivel_atual, cor = "🥈 Prata", "#C0C0C0"
+        elif valor_mes >= bronze:
+            nivel_atual, cor = "🥉 Bronze", "#CD7F32"
+
+        st.markdown(f"<h5 style='margin: 5px 0 -25px;'>👤 {vendedor_especifico}</h5>", unsafe_allow_html=True)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.plotly_chart(grafico_meta_percentual("Meta do Dia", perc_dia), use_container_width=True, key="grafico_extra_dia")
+        col2.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key="grafico_extra_semana")
+        col3.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key="grafico_extra_mes")
+        col4.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key="grafico_extra_nivel")
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -575,16 +684,20 @@ elif opcao == "🧾 Lançamentos":
             st.session_state.mostrar_emprestimos_financiamentos = True
 
 # === Submenu: Fechamento de Caixa ================================================================================ 
+# === Submenu: Fechamento de Caixa ================================================================================ 
 elif opcao == "💼 Fechamento de Caixa":
 
     data_fechamento = st.date_input("Data do Fechamento", value=date.today())
     data_fechamento_str = str(data_fechamento)
     data_util_anterior = ultimo_dia_util(data_fechamento)
 
-    # === Carrega último fechamento salvo antes da data atual ===
     def buscar_saldo_anterior(data_base):
         with sqlite3.connect(caminho_banco) as conn:
-            df = pd.read_sql("SELECT * FROM fechamento_caixa WHERE data < ? ORDER BY data DESC LIMIT 1", conn, params=(str(data_base),))
+            df = pd.read_sql(
+                "SELECT * FROM fechamento_caixa WHERE data < ? ORDER BY data DESC LIMIT 1",
+                conn,
+                params=(str(data_base),)
+            )
         if df.empty:
             return 0.0, 0.0, 0.0, 0.0, 0.0
         return (
@@ -597,128 +710,191 @@ elif opcao == "💼 Fechamento de Caixa":
 
     saldo_ant_banco1, saldo_ant_banco2, saldo_ant_banco4, saldo_ant_caixa, saldo_ant_caixa2 = buscar_saldo_anterior(data_fechamento)
 
-    # === Entradas confirmadas ===
     df_entrada = carregar_tabela("entrada")
     df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
 
-    valor_pix = df_entrada[(df_entrada["Forma_de_Pagamento"].str.upper() == "PIX") & (df_entrada["Data"].dt.date == data_fechamento)]["Valor"].sum() or 0.0
-    valor_dinheiro = df_entrada[(df_entrada["Forma_de_Pagamento"].str.upper() == "DINHEIRO") & (df_entrada["Data"].dt.date == data_fechamento)]["Valor"].sum() or 0.0
+    valor_pix = df_entrada[
+        (df_entrada["Forma_de_Pagamento"].str.upper() == "PIX") &
+        (df_entrada["Data"].dt.date == data_fechamento)
+    ]["Valor"].sum() or 0.0
+
+    valor_dinheiro = df_entrada[
+        (df_entrada["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
+        (df_entrada["Data"].dt.date == data_fechamento)
+    ]["Valor"].sum() or 0.0
+
+    with sqlite3.connect(caminho_banco) as conn:
+        cursor = conn.execute("""
+            SELECT banco_1, banco_2, banco_3, banco_4 
+            FROM saldos_bancos 
+            WHERE data <= ? 
+            ORDER BY data DESC 
+            LIMIT 1
+        """, (data_fechamento_str,))
+        resultado = cursor.fetchone()
+
+        if resultado:
+            saldo_cad_banco_1, saldo_cad_banco_2, saldo_cad_banco_3, saldo_cad_banco_4 = resultado
+        else:
+            saldo_cad_banco_1 = 0.0
+            saldo_cad_banco_2 = saldo_ant_banco2
+            saldo_cad_banco_3 = 0.0
+            saldo_cad_banco_4 = saldo_ant_banco4
+
+    def calcular_valor_liquido_cartao(df_entrada, data_base):
+        cal = BrazilDistritoFederal()
+        dias_para_considerar = []
+        dia_anterior = data_base - timedelta(days=1)
+
+        while not cal.is_working_day(dia_anterior):
+            dias_para_considerar.append(dia_anterior)
+            dia_anterior -= timedelta(days=1)
+
+        dias_para_considerar.append(dia_anterior)
+
+        df_cartao = df_entrada[
+            (df_entrada["Forma_de_Pagamento"].str.upper().isin(["DÉBITO", "CRÉDITO"])) &
+            (df_entrada["Data"].dt.date.isin([d for d in dias_para_considerar]))
+        ]
+
+        total_liquido = 0.0
+        mapeamento_bandeiras = {
+            "MASTERCARD": "MASTER",
+            "MASTER": "MASTER",
+            "DINERS CLUB": "DINERSCLUB",
+            "DINERSCLUB": "DINERSCLUB",
+            "DINERS": "DINERSCLUB",
+            "DINERSCLUBE": "DINERSCLUB",
+            "DINERSCLUBINTERNACIONAL": "DINERSCLUB",
+            "AMEX": "AMEX",
+            "ELO": "ELO",
+            "VISA": "VISA"
+        }
+
+        for _, row in df_cartao.iterrows():
+            valor = row["Valor"]
+            forma = row["Forma_de_Pagamento"].upper()
+            bandeira_raw = str(row.get("Bandeira", "")).upper().replace(" ", "").replace("-", "")
+            bandeira = mapeamento_bandeiras.get(bandeira_raw, bandeira_raw)
+            parcelas = int(row.get("Parcelas", 1))
+
+            with sqlite3.connect(caminho_banco) as conn:
+                cursor = conn.execute("""
+                    SELECT taxa_percentual
+                    FROM taxas_maquinas
+                    WHERE UPPER(forma_pagamento) = ? 
+                    AND UPPER(bandeira) = ? 
+                    AND parcelas = ?
+                """, (forma, bandeira, parcelas))
+                resultado = cursor.fetchone()
+
+            taxa = resultado[0] if resultado else 0.0
+            valor_liquido = valor * (1 - taxa / 100)
+            total_liquido += valor_liquido
+
+        return round(total_liquido, 2)
 
     total_cartao_liquido = calcular_valor_liquido_cartao(df_entrada, data_fechamento)
-    valor_banco_1 = valor_pix + total_cartao_liquido
+    valor_banco_1 = saldo_cad_banco_1 + valor_pix + total_cartao_liquido
 
-    # === Saídas do dia ===
     df_saida = carregar_tabela("saida")
     df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
     total_saidas = df_saida[df_saida["Data"].dt.date == data_fechamento]["Valor"].sum()
 
-    # === Correções manuais ===
     with sqlite3.connect(caminho_banco) as conn:
         cursor = conn.execute("SELECT SUM(valor) FROM correcao_caixa WHERE data = ?", (data_fechamento_str,))
         total_correcao = cursor.fetchone()[0] or 0.0
 
-    # === Carrega saldos fixos do cadastro (saldos_bancos) =======================================
     with sqlite3.connect(caminho_banco) as conn:
-        cursor = conn.execute("SELECT banco_2, banco_3, banco_4 FROM saldos_bancos WHERE data = ?", (data_fechamento_str,))
+        cursor = conn.execute("""
+            SELECT caixa, caixa_2 
+            FROM saldos_caixas 
+            WHERE data <= ? 
+            ORDER BY data DESC 
+            LIMIT 1
+        """, (data_fechamento_str,))
         resultado = cursor.fetchone()
 
     if resultado:
-        saldo_cad_banco_2, saldo_cad_banco_3, saldo_cad_banco_4 = resultado
+        valor_caixa_registrado, valor_caixa2 = resultado
+        valor_caixa = valor_caixa_registrado + valor_dinheiro
     else:
-        saldo_cad_banco_2 = saldo_ant_banco2
-        saldo_cad_banco_3 = 0.0
-        saldo_cad_banco_4 = saldo_ant_banco4
-
-    # === Carrega valores de caixa e caixa_2 do cadastro (saldos_caixas) ========================
-    with sqlite3.connect(caminho_banco) as conn:
-        cursor = conn.execute("SELECT caixa, caixa_2 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
-        resultado = cursor.fetchone()
-
-    if resultado:
-        valor_caixa, valor_caixa2 = resultado
-    else:
-        valor_caixa = valor_dinheiro  # fallback
+        st.warning("⚠️ Nenhum saldo encontrado em `saldos_caixas` até a data selecionada.")
+        valor_caixa = valor_dinheiro
         valor_caixa2 = saldo_ant_caixa2
 
-    # === Inputs visuais na ordem desejada: Caixa, Caixa 2, Banco 1, 2, 3, 4 ======================
-    col1, col2 = st.columns(2)
-    with col1:
-        st.number_input("Caixa (dinheiro)", value=valor_dinheiro, disabled=True, format="%.2f")
-    with col2:
-        caixa2 = st.number_input("Caixa 2", value=saldo_ant_caixa2, disabled=True, format="%.2f")
-
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        banco_1 = st.number_input("Saldo Banco 1", value=float(valor_banco_1), disabled=True, format="%.2f")
-    with col4:
-        banco_2 = st.number_input("Saldo Banco 2", value=saldo_cad_banco_2, disabled=True, format="%.2f")
-    with col5:
-        banco_3 = st.number_input("Saldo Banco 3", value=saldo_cad_banco_3, disabled=True, format="%.2f")
-
-    col6, _ = st.columns(2)
-    with col6:
-        banco_4 = st.number_input("Saldo Banco 4", value=saldo_cad_banco_4, disabled=True, format="%.2f")
-
-    caixa = valor_dinheiro  # automático
-
-    # === Cálculos finais atualizados =============================================================
-    total_pix_dinheiro = valor_pix + valor_dinheiro
-    total_entradas = total_pix_dinheiro + total_cartao_liquido
-    saldo_esperado = total_entradas - total_saidas + total_correcao
-    valor_informado = valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4 + caixa + caixa2
-    diferenca = valor_informado - saldo_esperado
-
-    # === Resumo visual ===
-    st.markdown("### 📈 Resumo do Fechamento do Dia")
-    st.markdown(f"- 💸 Pix/Dinheiro de hoje: R$ {total_pix_dinheiro:,.2f}".replace(".", ","))
-    st.markdown(f"- 💳 Cartão (líquido D-1 útil): R$ {total_cartao_liquido:,.2f}".replace(".", ","))
-
+    st.markdown("### 🪙 Valores que entrou Hoje")
+    st.markdown(f"- 💵 Dinheiro recebido hoje: <span style='color:#2c91e9; font-weight:bold;'>R$ {valor_dinheiro:,.2f}</span>".replace(".", ","), unsafe_allow_html=True)
+    st.markdown(f"- 💱 Pix recebido hoje: <span style='color:#2c91e9; font-weight:bold;'>R$ {valor_pix:,.2f}</span>".replace(".", ","), unsafe_allow_html=True)
+    st.markdown(f"- 💳 Vendas no Cartão de Crédito no último dia útil anterior: <span style='color:#2c91e9; font-weight:bold;'>R$ {total_cartao_liquido:,.2f}</span>".replace(".", ","), unsafe_allow_html=True)
+    st.markdown("### 🔁Resumo das movimentações de Hoje")
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.info(f"Entradas confirmadas: R$ {total_entradas:,.2f}".replace(".", ","))
+        st.success(f"Entradas: R$ {valor_pix + valor_dinheiro + total_cartao_liquido:,.2f}".replace(".", ","))
     with col2:
         st.error(f"Saídas: R$ {total_saidas:,.2f}".replace(".", ","))
     with col3:
-        st.success(f"Correções: R$ {total_correcao:,.2f}".replace(".", ","))
+        st.info(f"Correções: R$ {total_correcao:,.2f}".replace(".", ","))
+    st.markdown("### 🧾 Saldo em Caixas e Bancos")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.text_input("Caixa (dinheiro)", value=f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
+    with col2:
+        st.text_input("Caixa 2", value=f"R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
 
-    st.markdown(f"### 💰 Saldo Esperado: R$ {saldo_esperado:,.2f}".replace(".", ","))
-    st.markdown(f"### 💵 Valor Informado: R$ {valor_informado:,.2f}".replace(".", ","))
+    col3, col4, col5, col6 = st.columns(4)
+    with col3:
+        st.text_input("Inter", value=f"R$ {valor_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
+    with col4:
+        st.text_input("Bradesco", value=f"R$ {saldo_cad_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
+    with col5:
+        st.text_input("InfinitePay", value=f"R$ {saldo_cad_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
+    with col6:
+        st.text_input("Outros Bancos", value=f"R$ {saldo_cad_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
 
+    saldo_total = valor_caixa + valor_caixa2 + valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4
+    st.markdown(f"# 💰 Saldo Total: R$ {saldo_total:,.2f}".replace(".", ","), unsafe_allow_html=True)
 
-    
-    # === Salvar no banco ===
-    if total_entradas <= 0 or valor_informado <= 0:
-        st.warning("⚠️ Entradas e valor informado não podem ser zero.")
-    else:
-        if st.button("📅 Salvar Fechamento"):
+    confirmar = st.checkbox(f"📂 Confirmo que o saldo total está correto: R$ {saldo_total:,.2f}".replace(".", ","))
+
+    if st.button("💾 Salvar Fechamento"):
+        if not confirmar:
+            st.warning("⚠️ Você precisa confirmar que o saldo está correto antes de salvar.")
+        else:
             try:
                 with sqlite3.connect(caminho_banco) as conn:
-                    conn.execute("""
-                        INSERT INTO fechamento_caixa (
-                            data, banco_1, banco_2, banco_3, banco_4,
-                            caixa, caixa_2, entradas_confirmadas, saidas,
-                            correcao, saldo_esperado, valor_informado, diferenca
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        str(data_fechamento),
-                        float(valor_banco_1),
-                        saldo_cad_banco_2,
-                        saldo_cad_banco_3,
-                        saldo_cad_banco_4,
-                        float(valor_dinheiro),
-                        caixa2,
-                        total_entradas,
-                        total_saidas,
-                        total_correcao,
-                        saldo_esperado,
-                        valor_informado,
-                        diferenca
-                    ))
-                    conn.commit()
-                st.success("✅ Fechamento salvo com sucesso!")
-                st.rerun()
+                    cursor = conn.execute("SELECT 1 FROM fechamento_caixa WHERE data = ?", (str(data_fechamento),))
+                    if cursor.fetchone():
+                        st.warning("⚠️ Já existe um fechamento salvo para esta data.")
+                    else:
+                        conn.execute("""
+                            INSERT INTO fechamento_caixa (
+                                data, banco_1, banco_2, banco_3, banco_4,
+                                caixa, caixa_2, entradas_confirmadas, saidas,
+                                correcao, saldo_esperado, valor_informado, diferenca
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            str(data_fechamento),
+                            float(valor_banco_1),
+                            saldo_cad_banco_2,
+                            saldo_cad_banco_3,
+                            saldo_cad_banco_4,
+                            float(valor_caixa),
+                            valor_caixa2,
+                            valor_pix + valor_dinheiro + total_cartao_liquido,
+                            total_saidas,
+                            total_correcao,
+                            saldo_total,
+                            saldo_total,
+                            0.0
+                        ))
+                        conn.commit()
+                        st.success("✅ Fechamento salvo com sucesso!")
+                        st.balloons()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
+
+
 
 
 
