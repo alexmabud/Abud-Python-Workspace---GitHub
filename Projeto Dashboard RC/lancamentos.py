@@ -312,6 +312,115 @@ def gerar_gauge(valor, titulo, nivel, cor):
         }
     ))
 
+# Função que exibe um bloco visual de destaque (ex: vendas ou metas)
+def bloco_destaque(titulo, itens):
+    st.markdown(f"""
+    <div style='border: 1px solid #444; border-radius: 10px; padding: 20px; background-color: #1c1c1c; margin-bottom: 20px;'>
+        <h4 style='color: white;'>{titulo}</h4>
+        <table style='width: 100%; margin-top: 15px;'>
+            <tr>
+                {''.join([
+                    f"<td style='text-align: center; width: 32%;'>"
+                    f"<div style='color: #ccc; font-weight: bold;'>{label}</div>"
+                    f"<div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(valor)}</div>"
+                    f"</td>"
+                    for label, valor in itens
+                ])}
+            </tr>
+        </table>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Função que Exibe o bloco visual das comissões dos usuários (Gerente/Admin vê todos, Vendedor vê só a dele)
+def bloco_comissoes(df_entrada, df_metas, coluna_dia, usuario_logado, perfil_logado, caminho_banco):
+    if perfil_logado in ["Administrador", "Gerente"]:
+        usuarios = df_metas[df_metas["vendedor"].str.upper() != "LOJA"]["vendedor"].unique() if not df_metas.empty else []
+    else:
+        usuarios = [usuario_logado]
+
+    html = """
+    <div style='border: 1px solid #444; border-radius: 10px; padding: 20px; background-color: #1c1c1c; margin-bottom: 20px;'>
+        <h4 style='color: white;'>💰 Comissões</h4>
+    """
+    for nome in usuarios:
+        nome_upper = nome.upper()
+        df_user = df_entrada[df_entrada["Usuario"].str.upper() == nome_upper]
+        valor_mes = df_user[df_user["Data"].dt.date >= date.today().replace(day=1)]["Valor"].sum()
+        with sqlite3.connect(caminho_banco) as conn:
+            cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (nome_upper,))
+            id_usuario = cursor.fetchone()
+            metas_usuario = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
+        _, _, _, ouro, prata, bronze = extrair_metas(metas_usuario, coluna_dia) if not metas_usuario.empty else (0,0,0,0,0,0)
+        if valor_mes >= ouro:
+            nivel, perc_comissao = "🥇 Ouro", 2.0
+        elif valor_mes >= prata:
+            nivel, perc_comissao = "🥈 Prata", 1.5
+        elif valor_mes >= bronze:
+            nivel, perc_comissao = "🥉 Bronze", 1.0
+        else:
+            nivel, perc_comissao = None, 0.0
+
+        if nivel:
+            valor_comissao = (valor_mes * perc_comissao) / 100
+            msg = f"Comissão: <b>{perc_comissao:.1f}%</b> = <span style='color:#00FFAA'>{formatar_valor(valor_comissao)}</span>"
+            if nome_upper == usuario_logado:
+                html += f"<div style='color: #00FFAA; margin-bottom: 10px;'>✅ Você bateu a meta <b>{nivel}</b>. {msg}</div>"
+            else:
+                html += f"<div style='color: #ccc; margin-bottom: 10px;'>👤 <b>{nome}</b> bateu a meta <b>{nivel}</b> — {msg}</div>"
+        elif nome_upper == usuario_logado:
+            html += "<div style='color: orange; margin-bottom: 10px;'>⚠️ Você ainda não bateu a <b>meta do mês</b>.</div>"
+        elif perfil_logado != "Vendedor":
+            html += f"<div style='color: #888; margin-bottom: 10px;'>👤 <b>{nome}</b> ainda não bateu a meta do mês.</div>"
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+# Função que Exibe os gráficos de metas para todos os perfis (Adm/Gerente veem todos, Vendedor vê só a loja e ele mesmo)
+def graficos_vendedores(df_entrada, df_metas, coluna_dia, perfil_logado, usuario_logado, caminho_banco, hoje, inicio_semana, inicio_mes):
+    usuarios_unicos = ["LOJA"] + sorted([u for u in df_entrada["Usuario"].unique() if u.upper() != "LOJA"])
+    for i, vendedor in enumerate(usuarios_unicos):
+        nome_upper = vendedor.upper()
+        # Vendedor só vê a loja e ele mesmo
+        if perfil_logado == "Vendedor" and nome_upper not in ["LOJA", usuario_logado]:
+            continue
+
+        if nome_upper == "LOJA":
+            df_user = df_entrada.copy()
+            metas = df_metas[df_metas["vendedor"].str.upper() == "LOJA"] if not df_metas.empty else pd.DataFrame()
+        else:
+            df_user = df_entrada[df_entrada["Usuario"].str.upper() == nome_upper]
+            with sqlite3.connect(caminho_banco) as conn:
+                cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (nome_upper,))
+                id_usuario = cursor.fetchone()
+                metas = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
+        meta_dia, meta_semana, meta_mes, ouro, prata, bronze = extrair_metas(metas, coluna_dia) if not metas.empty else (0,0,0,0,0,0)
+        valor_dia = df_user[df_user["Data"].dt.date == hoje]["Valor"].sum()
+        valor_semana = df_user[df_user["Data"].dt.date >= inicio_semana]["Valor"].sum()
+        valor_mes = df_user[df_user["Data"].dt.date >= inicio_mes]["Valor"].sum()
+        perc_dia = calcular_percentual(valor_dia, meta_dia)
+        perc_semana = calcular_percentual(valor_semana, meta_semana)
+        perc_mes = calcular_percentual(valor_mes, meta_mes)
+        nivel_atual, cor = "Nenhum", "#B0BEC5"
+        if valor_mes >= ouro:
+            nivel_atual, cor = "🥇 Ouro", "#FFD700"
+        elif valor_mes >= prata:
+            nivel_atual, cor = "🥈 Prata", "#C0C0C0"
+        elif valor_mes >= bronze:
+            nivel_atual, cor = "🥉 Bronze", "#CD7F32"
+
+        if nome_upper == "LOJA":
+            st.markdown(f"<h5 style='margin: 5px 0;'>🏪 LOJA</h5>", unsafe_allow_html=True)
+            st.plotly_chart(grafico_meta_percentual("Meta do Dia", perc_dia), use_container_width=True, key="grafico_loja_dia")
+            col1, col2, col3 = st.columns(3)
+            col1.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key="grafico_loja_semana")
+            col2.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key="grafico_loja_mes")
+            col3.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key="grafico_loja_nivel")
+        else:
+            st.markdown(f"<h5 style='margin: 5px 0 -25px;'>👤 {vendedor}</h5>", unsafe_allow_html=True)
+            col1, col2, col3, col4 = st.columns(4)
+            col1.plotly_chart(grafico_meta_percentual("Meta do Dia", perc_dia), use_container_width=True, key=f"grafico_dia_{i}")
+            col2.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key=f"grafico_semana_{i}")
+            col3.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key=f"grafico_mes_{i}")
+            col4.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key=f"grafico_nivel_{i}")
 
 # === Inicializa estados padrão =======================================================================================
 estados_iniciais = {
@@ -408,7 +517,7 @@ st.title(opcao)
 
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-# === Submenu: Metas ============================================================================================
+# === Submenu: Metas ================================================================================================
 if opcao == "🎯 Metas":
     df_entrada = carregar_tabela("entrada")
     df_entrada = adicionar_dia_semana(df_entrada)
@@ -423,217 +532,33 @@ if opcao == "🎯 Metas":
 
     df_metas = carregar_metas()
 
-    # Calcula os valores
+    # --- Vendas
     df_loja = df_entrada.copy()
     total_dia = df_loja[df_loja["Data"].dt.date == hoje]["Valor"].sum()
     total_semana = df_loja[df_loja["Data"].dt.date >= inicio_semana]["Valor"].sum()
     total_mes = df_loja[df_loja["Data"].dt.date >= inicio_mes]["Valor"].sum()
+    bloco_destaque("🏪 Vendas da Loja", [
+        ("Vendas do Dia", total_dia),
+        ("Vendas da Semana", total_semana),
+        ("Vendas do Mês", total_mes)
+    ])
 
-    # Exibe tudo em um retângulo
-    st.markdown(f"""
-    <div style='
-        border: 1px solid #444;
-        border-radius: 10px;
-        padding: 20px;
-        background-color: #1c1c1c;
-        margin-bottom: 20px;
-    '>
-        <h4 style='color: white;'>🏪 Vendas da Loja</h4>
-        <div style='display: flex; justify-content: space-between; margin-top: 15px;'>
-            <div style='text-align: center; width: 32%;'>
-                <div style='color: #ccc; font-weight: bold;'>Vendas do Dia</div>
-                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(total_dia)}</div>
-            </div>
-            <div style='text-align: center; width: 32%;'>
-                <div style='color: #ccc; font-weight: bold;'>Vendas da Semana</div>
-                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(total_semana)}</div>
-            </div>
-            <div style='text-align: center; width: 32%;'>
-                <div style='color: #ccc; font-weight: bold;'>Vendas do Mês</div>
-                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(total_mes)}</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # --- Metas
+    metas_loja = df_metas[df_metas["vendedor"].str.upper() == "LOJA"] if not df_metas.empty else pd.DataFrame()
+    meta_dia, meta_semana, meta_mes, _, _, _ = extrair_metas(metas_loja, coluna_dia) if not metas_loja.empty else (0,0,0,0,0,0)
+    bloco_destaque("🎯 Metas da Loja", [
+        ("Meta do Dia", meta_dia),
+        ("Meta da Semana", meta_semana),
+        ("Meta do Mês", meta_mes)
+    ])
 
-    # === Metas da Loja ============================================================================================
-    metas_loja = df_metas[df_metas["vendedor"].str.upper() == "LOJA"]
-    meta_dia, meta_semana, meta_mes, _, _, _ = extrair_metas(metas_loja, coluna_dia)
-
-    st.markdown(f"""
-    <div style='
-        border: 1px solid #444;
-        border-radius: 10px;
-        padding: 20px;
-        background-color: #1c1c1c;
-        margin-bottom: 20px;
-    '>
-        <h4 style='color: white;'>🎯 Metas da Loja</h4>
-        <div style='display: flex; justify-content: space-between; margin-top: 15px;'>
-            <div style='text-align: center; width: 32%;'>
-                <div style='color: #ccc; font-weight: bold;'>Meta do Dia</div>
-                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(meta_dia)}</div>
-            </div>
-            <div style='text-align: center; width: 32%;'>
-                <div style='color: #ccc; font-weight: bold;'>Meta da Semana</div>
-                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(meta_semana)}</div>
-            </div>
-            <div style='text-align: center; width: 32%;'>
-                <div style='color: #ccc; font-weight: bold;'>Meta do Mês</div>
-                <div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(meta_mes)}</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # === Mensagem de Comissão por Perfil =========================================================================
+    # --- Comissões
     usuario_logado = st.session_state.usuario_logado.get("nome", "").upper()
     perfil_logado = st.session_state.usuario_logado.get("perfil", "")
+    bloco_comissoes(df_entrada, df_metas, coluna_dia, usuario_logado, perfil_logado, caminho_banco)
 
-    if perfil_logado in ["Administrador", "Gerente"]:
-        usuarios_para_mostrar = df_metas[df_metas["vendedor"].str.upper() != "LOJA"]["vendedor"].unique()
-    else:
-        usuarios_para_mostrar = [usuario_logado]
-
-    # Início do retângulo visual de comissões
-    comissoes_html = """
-    <div style='
-        border: 1px solid #444;
-        border-radius: 10px;
-        padding: 20px;
-        background-color: #1c1c1c;
-        margin-bottom: 20px;
-    '>
-        <h4 style='color: white;'>💰 Comissões</h4>
-    """
-
-    for nome in usuarios_para_mostrar:
-        nome_upper = nome.upper()
-        df_user = df_entrada[df_entrada["Usuario"].str.upper() == nome_upper]
-        valor_mes = df_user[df_user["Data"].dt.date >= inicio_mes]["Valor"].sum()
-
-        with sqlite3.connect(caminho_banco) as conn:
-            cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (nome_upper,))
-            id_usuario = cursor.fetchone()
-            metas_usuario = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
-
-        _, _, _, ouro, prata, bronze = extrair_metas(metas_usuario, coluna_dia)
-
-        if valor_mes >= ouro:
-            nivel, perc_comissao = "🥇 Ouro", 2.0
-        elif valor_mes >= prata:
-            nivel, perc_comissao = "🥈 Prata", 1.5
-        elif valor_mes >= bronze:
-            nivel, perc_comissao = "🥉 Bronze", 1.0
-        else:
-            nivel, perc_comissao = None, 0.0
-
-        if nivel:
-            valor_comissao = (valor_mes * perc_comissao) / 100
-            msg = f"Comissão: <b>{perc_comissao:.1f}%</b> = <span style='color:#00FFAA'>{formatar_valor(valor_comissao)}</span>"
-            if nome_upper == usuario_logado:
-                comissoes_html += f"<div style='color: #00FFAA; margin-bottom: 10px;'>✅ Você bateu a meta <b>{nivel}</b>. {msg}</div>"
-            else:
-                comissoes_html += f"<div style='color: #ccc; margin-bottom: 10px;'>👤 <b>{nome}</b> bateu a meta <b>{nivel}</b> — {msg}</div>"
-        elif nome_upper == usuario_logado:
-            comissoes_html += "<div style='color: orange; margin-bottom: 10px;'>⚠️ Você ainda não bateu a <b>meta do mês</b>.</div>"
-        elif perfil_logado != "Vendedor":
-            comissoes_html += f"<div style='color: #888; margin-bottom: 10px;'>👤 <b>{nome}</b> ainda não bateu a meta do mês.</div>"
-
-    comissoes_html += "</div>"
-
-    st.markdown(comissoes_html, unsafe_allow_html=True)
-
-    # === Gráficos por Vendedor ====================================================================================
-    usuarios_unicos = ["LOJA"] + sorted([u for u in df_entrada["Usuario"].unique() if u.upper() != "LOJA"])
-
-    for i, vendedor in enumerate(usuarios_unicos):
-        nome_upper = vendedor.upper()
-
-        if perfil_logado == "Administrador" and nome_upper == usuario_logado:
-            continue
-        if perfil_logado == "Vendedor" and nome_upper not in ["LOJA", usuario_logado]:
-            continue
-
-        if nome_upper == "LOJA":
-            df_user = df_entrada.copy()
-            metas = df_metas[df_metas["vendedor"].str.upper() == "LOJA"]
-        else:
-            df_user = df_entrada[df_entrada["Usuario"].str.upper() == nome_upper]
-            with sqlite3.connect(caminho_banco) as conn:
-                cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (nome_upper,))
-                id_usuario = cursor.fetchone()
-                metas = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
-
-        valor_dia = df_user[df_user["Data"].dt.date == hoje]["Valor"].sum()
-        valor_semana = df_user[df_user["Data"].dt.date >= inicio_semana]["Valor"].sum()
-        valor_mes = df_user[df_user["Data"].dt.date >= inicio_mes]["Valor"].sum()
-
-        meta_dia, meta_semana, meta_mes, ouro, prata, bronze = extrair_metas(metas, coluna_dia)
-
-        perc_dia = calcular_percentual(valor_dia, meta_dia)
-        perc_semana = calcular_percentual(valor_semana, meta_semana)
-        perc_mes = calcular_percentual(valor_mes, meta_mes)
-
-        nivel_atual, cor = "Nenhum", "#B0BEC5"
-        if valor_mes >= ouro:
-            nivel_atual, cor = "🥇 Ouro", "#FFD700"
-        elif valor_mes >= prata:
-            nivel_atual, cor = "🥈 Prata", "#C0C0C0"
-        elif valor_mes >= bronze:
-            nivel_atual, cor = "🥉 Bronze", "#CD7F32"
-
-        if nome_upper == "LOJA":
-            st.markdown(f"<h5 style='margin: 5px 0;'>🏪 LOJA</h5>", unsafe_allow_html=True)
-            st.plotly_chart(grafico_meta_percentual("Meta do Dia", perc_dia), use_container_width=True, key="grafico_loja_dia")
-            col1, col2, col3 = st.columns(3)
-            col1.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key="grafico_loja_semana")
-            col2.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key="grafico_loja_mes")
-            col3.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key="grafico_loja_nivel")
-            continue
-
-        st.markdown(f"<h5 style='margin: 5px 0 -25px;'>👤 {vendedor}</h5>", unsafe_allow_html=True)
-        col1, col2, col3, col4 = st.columns(4)
-        col1.plotly_chart(grafico_meta_percentual("Meta do Dia", perc_dia), use_container_width=True, key=f"grafico_dia_{i}")
-        col2.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key=f"grafico_semana_{i}")
-        col3.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key=f"grafico_mes_{i}")
-        col4.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key=f"grafico_nivel_{i}")
-
-    # === Renderiza manualmente o gráfico do VendedorTeste após todos os outros (para Gerente) ==========================
-    if perfil_logado == "Gerente":
-        vendedor_especifico = "VendedorTeste"
-        nome_upper = vendedor_especifico.upper()
-
-        df_user = df_entrada[df_entrada["Usuario"].str.upper() == nome_upper]
-        with sqlite3.connect(caminho_banco) as conn:
-            cursor = conn.execute("SELECT id FROM usuarios WHERE UPPER(nome) = ?", (nome_upper,))
-            id_usuario = cursor.fetchone()
-            metas = pd.read_sql("SELECT * FROM metas WHERE id_usuario = ?", conn, params=(id_usuario[0],)) if id_usuario else pd.DataFrame()
-
-        valor_dia = df_user[df_user["Data"].dt.date == hoje]["Valor"].sum()
-        valor_semana = df_user[df_user["Data"].dt.date >= inicio_semana]["Valor"].sum()
-        valor_mes = df_user[df_user["Data"].dt.date >= inicio_mes]["Valor"].sum()
-
-        meta_dia, meta_semana, meta_mes, ouro, prata, bronze = extrair_metas(metas, coluna_dia)
-
-        perc_dia = calcular_percentual(valor_dia, meta_dia)
-        perc_semana = calcular_percentual(valor_semana, meta_semana)
-        perc_mes = calcular_percentual(valor_mes, meta_mes)
-
-        nivel_atual, cor = "Nenhum", "#B0BEC5"
-        if valor_mes >= ouro:
-            nivel_atual, cor = "🥇 Ouro", "#FFD700"
-        elif valor_mes >= prata:
-            nivel_atual, cor = "🥈 Prata", "#C0C0C0"
-        elif valor_mes >= bronze:
-            nivel_atual, cor = "🥉 Bronze", "#CD7F32"
-
-        st.markdown(f"<h5 style='margin: 5px 0 -25px;'>👤 {vendedor_especifico}</h5>", unsafe_allow_html=True)
-        col1, col2, col3, col4 = st.columns(4)
-        col1.plotly_chart(grafico_meta_percentual("Meta do Dia", perc_dia), use_container_width=True, key="grafico_extra_dia")
-        col2.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key="grafico_extra_semana")
-        col3.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key="grafico_extra_mes")
-        col4.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key="grafico_extra_nivel")
+    # --- Gráficos
+    graficos_vendedores(df_entrada, df_metas, coluna_dia, perfil_logado, usuario_logado, caminho_banco, hoje, inicio_semana, inicio_mes)
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
