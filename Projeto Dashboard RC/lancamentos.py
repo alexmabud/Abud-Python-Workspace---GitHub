@@ -322,7 +322,7 @@ def bloco_destaque(titulo, itens):
                 {''.join([
                     f"<td style='text-align: center; width: 32%;'>"
                     f"<div style='color: #ccc; font-weight: bold;'>{label}</div>"
-                    f"<div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(valor)}</div>"
+                    f"<div style='font-size: 1.5rem; color: #00FFAA;'>{formatar_valor(valor) if isinstance(valor, (int, float)) else valor}</div>"
                     f"</td>"
                     for label, valor in itens
                 ])}
@@ -421,6 +421,83 @@ def graficos_vendedores(df_entrada, df_metas, coluna_dia, perfil_logado, usuario
             col2.plotly_chart(grafico_meta_percentual("Meta da Semana", perc_semana), use_container_width=True, key=f"grafico_semana_{i}")
             col3.plotly_chart(grafico_meta_percentual("Meta do Mês", perc_mes), use_container_width=True, key=f"grafico_mes_{i}")
             col4.plotly_chart(gerar_gauge(perc_mes, "Nível da Meta", nivel_atual, cor), use_container_width=True, key=f"grafico_nivel_{i}")
+
+# Funções de destaque para blocos de informações do Fechamento de Caixa ====================================================================================
+def bloco_destaque_3(titulo, itens):
+    st.markdown(f"""
+    <div style='border: 1px solid #444; border-radius: 10px; padding: 20px; background-color: #1c1c1c; margin-bottom: 20px;'>
+        <h4 style='color: white;'>{titulo}</h4>
+        <table style='width: 100%; margin-top: 15px; table-layout: fixed;'>
+            <tr>
+                {''.join([
+                    f"<td style='text-align: center; width: 33%;'>"
+                    f"<div style='color: #ccc; font-weight: bold;'>{label}</div>"
+                    f"<div style='font-size: 1.3rem; color: #00FFAA;'>{valor}</div>"
+                    f"</td>"
+                    for label, valor in itens
+                ])}
+            </tr>
+        </table>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Função de destaque para 2 colunas (Caixa)
+def bloco_destaque_2(titulo, label1, valor1, label2, valor2):
+    st.markdown(f"""
+    <div style='border: 1px solid #444; border-radius: 10px; padding: 20px; background-color: #1c1c1c; margin-bottom: 20px;'>
+        <h4 style='color: white;'>{titulo}</h4>
+        <table style='width: 100%; margin-top: 15px; table-layout: fixed;'>
+            <tr>
+                <td style='text-align: center; width: 50%;'>
+                    <div style='color: #ccc; font-weight: bold;'>{label1}</div>
+                    <div style='font-size: 1.5rem; color: #00FFAA;'>{valor1}</div>
+                </td>
+                <td style='text-align: center; width: 50%;'>
+                    <div style='color: #ccc; font-weight: bold;'>{label2}</div>
+                    <div style='font-size: 1.5rem; color: #00FFAA;'>{valor2}</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Função de destaque para 4 colunas (Bancos)
+def bloco_destaque_4(titulo, itens):
+    st.markdown(f"""
+    <div style='border: 1px solid #444; border-radius: 10px; padding: 20px; background-color: #1c1c1c; margin-bottom: 20px;'>
+        <h4 style='color: white;'>{titulo}</h4>
+        <table style='width: 100%; margin-top: 15px; table-layout: fixed;'>
+            <tr>
+                {''.join([
+                    f"<td style='text-align: center; width: 25%;'>"
+                    f"<div style='color: #ccc; font-weight: bold;'>{label}</div>"
+                    f"<div style='font-size: 1.2rem; color: #00FFAA;'>{valor}</div>"
+                    f"</td>"
+                    for label, valor in itens
+                ])}
+            </tr>
+        </table>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Função para saldo total centralizado com confirmação e botão
+def bloco_saldo_total(titulo, saldo_total):
+    col = st.columns([1, 2, 1])[1]  # Centraliza o bloco
+    with col:
+        st.markdown(f"""
+        <div style='border: 2px solid #FFD700; border-radius: 15px; padding: 32px; background-color: #222; margin-bottom: 30px; text-align:center;'>
+            <h2 style='color: #FFD700; font-size: 2.2rem; margin-bottom: 15px;'>{titulo}</h2>
+            <div style='font-size: 2.4rem; color: #00FFAA; font-weight: bold; margin-bottom: 30px;'>
+                R$ {saldo_total:,.2f}
+            </div>
+        """, unsafe_allow_html=True)
+        confirmar = st.checkbox(
+            f"Confirma saldo total: R$ {saldo_total:,.2f}".replace(".", ","),
+            key="confirmar_fechamento"
+        )
+        salvar = st.button("💾 Salvar Fechamento", key="btn_salvar_fechamento")
+        st.markdown("</div>", unsafe_allow_html=True)
+    return confirmar, salvar
 
 # === Inicializa estados padrão =======================================================================================
 estados_iniciais = {
@@ -608,13 +685,15 @@ elif opcao == "🧾 Lançamentos":
             limpar_todas_as_paginas()
             st.session_state.mostrar_emprestimos_financiamentos = True
 
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # === Submenu: Fechamento de Caixa ================================================================================ 
-# === Submenu: Fechamento de Caixa ================================================================================ 
-elif opcao == "💼 Fechamento de Caixa":
-
+if opcao == "💼 Fechamento de Caixa":
+    
     data_fechamento = st.date_input("Data do Fechamento", value=date.today())
+    st.markdown(f"🗓️ **Fechamento do dia:** {data_fechamento.strftime('%d/%m/%Y')}")
     data_fechamento_str = str(data_fechamento)
     data_util_anterior = ultimo_dia_util(data_fechamento)
+   
 
     def buscar_saldo_anterior(data_base):
         with sqlite3.connect(caminho_banco) as conn:
@@ -638,13 +717,13 @@ elif opcao == "💼 Fechamento de Caixa":
     df_entrada = carregar_tabela("entrada")
     df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
 
-    valor_pix = df_entrada[
-        (df_entrada["Forma_de_Pagamento"].str.upper() == "PIX") &
+    valor_dinheiro = df_entrada[
+        (df_entrada["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
         (df_entrada["Data"].dt.date == data_fechamento)
     ]["Valor"].sum() or 0.0
 
-    valor_dinheiro = df_entrada[
-        (df_entrada["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
+    valor_pix = df_entrada[
+        (df_entrada["Forma_de_Pagamento"].str.upper() == "PIX") &
         (df_entrada["Data"].dt.date == data_fechamento)
     ]["Valor"].sum() or 0.0
 
@@ -722,6 +801,16 @@ elif opcao == "💼 Fechamento de Caixa":
     total_cartao_liquido = calcular_valor_liquido_cartao(df_entrada, data_fechamento)
     valor_banco_1 = saldo_cad_banco_1 + valor_pix + total_cartao_liquido
 
+    # --- Bloco: Valores que Entraram Hoje
+    bloco_destaque_3(
+        "🪙 Valores que Entraram Hoje",
+        [
+            ("Dinheiro", f"R$ {valor_dinheiro:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Pix", f"R$ {valor_pix:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Cartão D-1 (Líquido)", f"R$ {total_cartao_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        ]
+    )
+
     df_saida = carregar_tabela("saida")
     df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
     total_saidas = df_saida[df_saida["Data"].dt.date == data_fechamento]["Valor"].sum()
@@ -748,41 +837,43 @@ elif opcao == "💼 Fechamento de Caixa":
         valor_caixa = valor_dinheiro
         valor_caixa2 = saldo_ant_caixa2
 
-    st.markdown("### 🪙 Valores que entrou Hoje")
-    st.markdown(f"- 💵 Dinheiro recebido hoje: <span style='color:#2c91e9; font-weight:bold;'>R$ {valor_dinheiro:,.2f}</span>".replace(".", ","), unsafe_allow_html=True)
-    st.markdown(f"- 💱 Pix recebido hoje: <span style='color:#2c91e9; font-weight:bold;'>R$ {valor_pix:,.2f}</span>".replace(".", ","), unsafe_allow_html=True)
-    st.markdown(f"- 💳 Vendas no Cartão de Crédito no último dia útil anterior: <span style='color:#2c91e9; font-weight:bold;'>R$ {total_cartao_liquido:,.2f}</span>".replace(".", ","), unsafe_allow_html=True)
-    st.markdown("### 🔁Resumo das movimentações de Hoje")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.success(f"Entradas: R$ {valor_pix + valor_dinheiro + total_cartao_liquido:,.2f}".replace(".", ","))
-    with col2:
-        st.error(f"Saídas: R$ {total_saidas:,.2f}".replace(".", ","))
-    with col3:
-        st.info(f"Correções: R$ {total_correcao:,.2f}".replace(".", ","))
-    st.markdown("### 🧾 Saldo em Caixas e Bancos")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.text_input("Caixa (dinheiro)", value=f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
-    with col2:
-        st.text_input("Caixa 2", value=f"R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
+    saldo_total = valor_caixa + valor_caixa2 + valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4 + total_correcao
 
-    col3, col4, col5, col6 = st.columns(4)
-    with col3:
-        st.text_input("Inter", value=f"R$ {valor_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
-    with col4:
-        st.text_input("Bradesco", value=f"R$ {saldo_cad_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
-    with col5:
-        st.text_input("InfinitePay", value=f"R$ {saldo_cad_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
-    with col6:
-        st.text_input("Outros Bancos", value=f"R$ {saldo_cad_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), disabled=True)
 
-    saldo_total = valor_caixa + valor_caixa2 + valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4
-    st.markdown(f"# 💰 Saldo Total: R$ {saldo_total:,.2f}".replace(".", ","), unsafe_allow_html=True)
+    # --- Bloco: Resumo das Movimentações de Hoje
+    entradas_confirmadas = valor_pix + valor_dinheiro + total_cartao_liquido
 
-    confirmar = st.checkbox(f"📂 Confirmo que o saldo total está correto: R$ {saldo_total:,.2f}".replace(".", ","))
+    bloco_destaque_3(
+        "🔁 Resumo das Movimentações de Hoje",
+        [
+            ("Entradas", f"R$ {entradas_confirmadas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Saídas", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Correções", f"R$ {total_correcao:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        ]
+    )
+    
+    # --- Bloco: Saldo em Caixa
+    bloco_destaque_2(
+        "💵 Saldo em Caixa",
+        "Caixa", f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+        "Caixa 2", f"R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    )
 
-    if st.button("💾 Salvar Fechamento"):
+    # --- Bloco: Saldo em Bancos
+    bloco_destaque_4(
+        "🏦 Saldo em Bancos",
+        [
+            ("Inter", f"R$ {valor_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Bradesco", f"R$ {saldo_cad_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("InfinitePay", f"R$ {saldo_cad_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Outros Bancos", f"R$ {saldo_cad_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        ]
+    )
+
+    # --- Bloco: Saldo Total central, já com checkbox e botão
+    confirmar, salvar = bloco_saldo_total("💰 Saldo Total", saldo_total)
+
+    if salvar:
         if not confirmar:
             st.warning("⚠️ Você precisa confirmar que o saldo está correto antes de salvar.")
         else:
@@ -819,9 +910,47 @@ elif opcao == "💼 Fechamento de Caixa":
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
+# --- Tabela de Fechamentos Anteriores ---
+    with sqlite3.connect(caminho_banco) as conn:
+        df_fechamentos = pd.read_sql("""
+            SELECT 
+                data as 'Data',
+                banco_1 as 'Inter',
+                banco_2 as 'Bradesco',
+                banco_3 as 'InfinitePay',
+                banco_4 as 'Outros Bancos',
+                caixa as 'Caixa',
+                caixa_2 as 'Caixa 2',
+                entradas_confirmadas as 'Entradas',
+                saidas as 'Saídas',
+                correcao as 'Correções',
+                saldo_esperado as 'Saldo Esperado',
+                valor_informado as 'Valor Informado',
+                diferenca as 'Diferença'
+            FROM fechamento_caixa
+            ORDER BY data DESC
+        """, conn)
 
+    if not df_fechamentos.empty:
+        st.markdown("### 📋 Fechamentos Anteriores")
+        st.dataframe(df_fechamentos.style.format({
+            "Inter": "R$ {:,.2f}",
+            "Bradesco": "R$ {:,.2f}",
+            "InfinitePay": "R$ {:,.2f}",
+            "Outros Bancos": "R$ {:,.2f}",
+            "Caixa": "R$ {:,.2f}",
+            "Caixa 2": "R$ {:,.2f}",
+            "Entradas": "R$ {:,.2f}",
+            "Saídas": "R$ {:,.2f}",
+            "Correções": "R$ {:,.2f}",
+            "Saldo Esperado": "R$ {:,.2f}",
+            "Valor Informado": "R$ {:,.2f}",
+            "Diferença": "R$ {:,.2f}",
+        }), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum fechamento realizado ainda.")
 
-
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 # === Submenu: Cadastro ============================================================================================
 elif opcao == "🛠️ Cadastro":
@@ -1636,6 +1765,10 @@ if st.session_state.get("mostrar_usuarios", False):
 if st.session_state.get("mostrar_correcao_caixa", False):
     st.subheader("🛠️ Correção Manual de Caixa")
 
+    # -- Inicializa estado de sucesso se não existir
+    if "correcao_sucesso" not in st.session_state:
+        st.session_state["correcao_sucesso"] = False
+
     data_corrigir = st.date_input("Data do Ajuste", value=date.today())
     valor_ajuste = st.number_input("Valor de Correção (positivo ou negativo)", step=10.0, format="%.2f")
     observacao = st.text_input("Motivo ou Observação", max_chars=200)
@@ -1648,10 +1781,17 @@ if st.session_state.get("mostrar_correcao_caixa", False):
                     VALUES (?, ?, ?)
                 """, (str(data_corrigir), valor_ajuste, observacao))
                 conn.commit()
-            st.success("✅ Ajuste salvo com sucesso!")
+            st.session_state["correcao_sucesso"] = True
             st.rerun()
         except Exception as e:
             st.error(f"Erro ao salvar correção: {e}")
+
+    # -- Mensagem de sucesso fixa até clicar em OK
+    if st.session_state.get("correcao_sucesso", False):
+        st.success("✅ Ajuste salvo com sucesso!")
+        if st.button("OK, entendi!", key="ok_sucesso_correcao"):
+            st.session_state["correcao_sucesso"] = False
+            st.rerun()
 
     st.markdown("### 📋 Ajustes Registrados")
     try:
