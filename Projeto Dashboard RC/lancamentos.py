@@ -686,34 +686,14 @@ elif opcao == "🧾 Lançamentos":
             st.session_state.mostrar_emprestimos_financiamentos = True
 
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# === Submenu: Fechamento de Caixa ================================================================================ 
+# === Submenu: Fechamento de Caixa ==========================================================
 if opcao == "💼 Fechamento de Caixa":
-    
     data_fechamento = st.date_input("Data do Fechamento", value=date.today())
     st.markdown(f"🗓️ **Fechamento do dia:** {data_fechamento.strftime('%d/%m/%Y')}")
     data_fechamento_str = str(data_fechamento)
     data_util_anterior = ultimo_dia_util(data_fechamento)
-   
 
-    def buscar_saldo_anterior(data_base):
-        with sqlite3.connect(caminho_banco) as conn:
-            df = pd.read_sql(
-                "SELECT * FROM fechamento_caixa WHERE data < ? ORDER BY data DESC LIMIT 1",
-                conn,
-                params=(str(data_base),)
-            )
-        if df.empty:
-            return 0.0, 0.0, 0.0, 0.0, 0.0
-        return (
-            df.iloc[0]["banco_1"],
-            df.iloc[0]["banco_2"],
-            df.iloc[0]["banco_4"],
-            df.iloc[0]["caixa"],
-            df.iloc[0]["caixa_2"]
-        )
-
-    saldo_ant_banco1, saldo_ant_banco2, saldo_ant_banco4, saldo_ant_caixa, saldo_ant_caixa2 = buscar_saldo_anterior(data_fechamento)
-
+    # Entradas
     df_entrada = carregar_tabela("entrada")
     df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
 
@@ -727,6 +707,61 @@ if opcao == "💼 Fechamento de Caixa":
         (df_entrada["Data"].dt.date == data_fechamento)
     ]["Valor"].sum() or 0.0
 
+    # Atualiza/Grava caixa_vendas, caixa_total e caixa2_total para a data do fechamento
+    with sqlite3.connect(caminho_banco) as conn:
+        # Busca o valor manual já lançado no caixa para esse dia
+        cursor = conn.execute("SELECT caixa, caixa_2 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
+        resultado_caixa = cursor.fetchone()
+        caixa_manual = float(resultado_caixa[0]) if resultado_caixa else 0.0
+        caixa2_manual = float(resultado_caixa[1]) if resultado_caixa else 0.0
+
+        # Busca se já existe registro
+        cursor = conn.execute("SELECT 1 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
+        existe = cursor.fetchone()
+        if existe:
+            conn.execute("""
+                UPDATE saldos_caixas 
+                SET caixa_vendas = ?, 
+                    caixa_total = ?, 
+                    caixa2_total = ?
+                WHERE data = ?
+            """, (
+                valor_dinheiro, 
+                caixa_manual + valor_dinheiro, 
+                caixa2_manual,   # Atualize se houver transferência no mesmo dia
+                data_fechamento_str
+            ))
+        else:
+            conn.execute("""
+                INSERT INTO saldos_caixas (data, caixa_vendas, caixa, caixa_total, caixa_2, caixa2_dia, caixa2_total)
+                VALUES (?, ?, 0, ?, 0, 0, ?)
+            """, (
+                data_fechamento_str, 
+                valor_dinheiro, 
+                valor_dinheiro,     # caixa_total = caixa (zero) + caixa_vendas
+                caixa2_manual       # caixa2_total
+            ))
+        conn.commit()
+
+    # Busca saldos de caixa e caixa 2 (usar _total!)
+    with sqlite3.connect(caminho_banco) as conn:
+        cursor = conn.execute("""
+            SELECT caixa_total, caixa2_total
+            FROM saldos_caixas
+            WHERE data = ?
+            LIMIT 1
+        """, (data_fechamento_str,))
+        resultado = cursor.fetchone()
+
+    if resultado:
+        valor_caixa = resultado[0] or 0.0
+        valor_caixa2 = resultado[1] or 0.0
+    else:
+        st.warning("⚠️ Nenhum saldo encontrado em `saldos_caixas` para a data selecionada.")
+        valor_caixa = 0.0
+        valor_caixa2 = 0.0
+
+    # Saldos dos bancos
     with sqlite3.connect(caminho_banco) as conn:
         cursor = conn.execute("""
             SELECT banco_1, banco_2, banco_3, banco_4 
@@ -735,32 +770,25 @@ if opcao == "💼 Fechamento de Caixa":
             ORDER BY data DESC 
             LIMIT 1
         """, (data_fechamento_str,))
-        resultado = cursor.fetchone()
+        resultado_bancos = cursor.fetchone()
 
-        if resultado:
-            saldo_cad_banco_1, saldo_cad_banco_2, saldo_cad_banco_3, saldo_cad_banco_4 = resultado
+        if resultado_bancos:
+            saldo_cad_banco_1, saldo_cad_banco_2, saldo_cad_banco_3, saldo_cad_banco_4 = resultado_bancos
         else:
-            saldo_cad_banco_1 = 0.0
-            saldo_cad_banco_2 = saldo_ant_banco2
-            saldo_cad_banco_3 = 0.0
-            saldo_cad_banco_4 = saldo_ant_banco4
+            saldo_cad_banco_1 = saldo_cad_banco_2 = saldo_cad_banco_3 = saldo_cad_banco_4 = 0.0
 
     def calcular_valor_liquido_cartao(df_entrada, data_base):
         cal = BrazilDistritoFederal()
         dias_para_considerar = []
         dia_anterior = data_base - timedelta(days=1)
-
         while not cal.is_working_day(dia_anterior):
             dias_para_considerar.append(dia_anterior)
             dia_anterior -= timedelta(days=1)
-
         dias_para_considerar.append(dia_anterior)
-
         df_cartao = df_entrada[
             (df_entrada["Forma_de_Pagamento"].str.upper().isin(["DÉBITO", "CRÉDITO"])) &
             (df_entrada["Data"].dt.date.isin([d for d in dias_para_considerar]))
         ]
-
         total_liquido = 0.0
         mapeamento_bandeiras = {
             "MASTERCARD": "MASTER",
@@ -774,14 +802,12 @@ if opcao == "💼 Fechamento de Caixa":
             "ELO": "ELO",
             "VISA": "VISA"
         }
-
         for _, row in df_cartao.iterrows():
             valor = row["Valor"]
             forma = row["Forma_de_Pagamento"].upper()
             bandeira_raw = str(row.get("Bandeira", "")).upper().replace(" ", "").replace("-", "")
             bandeira = mapeamento_bandeiras.get(bandeira_raw, bandeira_raw)
             parcelas = int(row.get("Parcelas", 1))
-
             with sqlite3.connect(caminho_banco) as conn:
                 cursor = conn.execute("""
                     SELECT taxa_percentual
@@ -791,17 +817,15 @@ if opcao == "💼 Fechamento de Caixa":
                     AND parcelas = ?
                 """, (forma, bandeira, parcelas))
                 resultado = cursor.fetchone()
-
             taxa = resultado[0] if resultado else 0.0
             valor_liquido = valor * (1 - taxa / 100)
             total_liquido += valor_liquido
-
         return round(total_liquido, 2)
 
     total_cartao_liquido = calcular_valor_liquido_cartao(df_entrada, data_fechamento)
     valor_banco_1 = saldo_cad_banco_1 + valor_pix + total_cartao_liquido
 
-    # --- Bloco: Valores que Entraram Hoje
+    # Bloco: Valores que Entraram Hoje
     bloco_destaque_3(
         "🪙 Valores que Entraram Hoje",
         [
@@ -811,38 +835,19 @@ if opcao == "💼 Fechamento de Caixa":
         ]
     )
 
+    # Saídas e correções
     df_saida = carregar_tabela("saida")
     df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
     total_saidas = df_saida[df_saida["Data"].dt.date == data_fechamento]["Valor"].sum()
-
     with sqlite3.connect(caminho_banco) as conn:
         cursor = conn.execute("SELECT SUM(valor) FROM correcao_caixa WHERE data = ?", (data_fechamento_str,))
         total_correcao = cursor.fetchone()[0] or 0.0
 
-    with sqlite3.connect(caminho_banco) as conn:
-        cursor = conn.execute("""
-            SELECT caixa, caixa_2 
-            FROM saldos_caixas 
-            WHERE data <= ? 
-            ORDER BY data DESC 
-            LIMIT 1
-        """, (data_fechamento_str,))
-        resultado = cursor.fetchone()
-
-    if resultado:
-        valor_caixa_registrado, valor_caixa2 = resultado
-        valor_caixa = valor_caixa_registrado + valor_dinheiro
-    else:
-        st.warning("⚠️ Nenhum saldo encontrado em `saldos_caixas` até a data selecionada.")
-        valor_caixa = valor_dinheiro
-        valor_caixa2 = saldo_ant_caixa2
-
+    # Saldo total
     saldo_total = valor_caixa + valor_caixa2 + valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4 + total_correcao
 
-
-    # --- Bloco: Resumo das Movimentações de Hoje
+    # Bloco: Resumo das Movimentações de Hoje
     entradas_confirmadas = valor_pix + valor_dinheiro + total_cartao_liquido
-
     bloco_destaque_3(
         "🔁 Resumo das Movimentações de Hoje",
         [
@@ -851,15 +856,15 @@ if opcao == "💼 Fechamento de Caixa":
             ("Correções", f"R$ {total_correcao:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
         ]
     )
-    
-    # --- Bloco: Saldo em Caixa
+
+    # Bloco: Saldo em Caixa
     bloco_destaque_2(
         "💵 Saldo em Caixa",
         "Caixa", f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
         "Caixa 2", f"R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     )
 
-    # --- Bloco: Saldo em Bancos
+    # Bloco: Saldo em Bancos
     bloco_destaque_4(
         "🏦 Saldo em Bancos",
         [
@@ -870,7 +875,7 @@ if opcao == "💼 Fechamento de Caixa":
         ]
     )
 
-    # --- Bloco: Saldo Total central, já com checkbox e botão
+    # Bloco: Saldo Total central, já com checkbox e botão
     confirmar, salvar = bloco_saldo_total("💰 Saldo Total", saldo_total)
 
     if salvar:
@@ -879,7 +884,7 @@ if opcao == "💼 Fechamento de Caixa":
         else:
             try:
                 with sqlite3.connect(caminho_banco) as conn:
-                    cursor = conn.execute("SELECT 1 FROM fechamento_caixa WHERE data = ?", (str(data_fechamento),))
+                    cursor = conn.execute("SELECT 1 FROM fechamento_caixa WHERE data = ?", (data_fechamento_str,))
                     if cursor.fetchone():
                         st.warning("⚠️ Já existe um fechamento salvo para esta data.")
                     else:
@@ -910,7 +915,7 @@ if opcao == "💼 Fechamento de Caixa":
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-# --- Tabela de Fechamentos Anteriores ---
+    # --- Tabela de Fechamentos Anteriores ---
     with sqlite3.connect(caminho_banco) as conn:
         df_fechamentos = pd.read_sql("""
             SELECT 
@@ -998,99 +1003,77 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
     # === Resumo do Dia ==============================================================================================
     st.markdown("## 📊 Resumo do Dia")
 
-    # === Tabelas: Entradas, Saídas e Mercadorias ===
-    col1, col2, col3 = st.columns(3)
+    # --- Dados de Entradas, Saídas e Mercadorias ---
+    df_entrada = carregar_tabela("entrada")
+    df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
+    entradas_dia = df_entrada[df_entrada["Data"].dt.date == filtro_data]
+    total_entradas = entradas_dia["Valor"].sum() if not entradas_dia.empty else 0.0
 
-    with col1:
-        st.markdown("### 💸 Entradas")
-        try:
-            df_entrada = carregar_tabela("entrada")
-            df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
-            entradas_dia = df_entrada[df_entrada["Data"].dt.date == filtro_data]
-            if entradas_dia.empty:
-                st.info("Nenhuma entrada.")
-            else:
-                total_entradas = entradas_dia["Valor"].sum()
-                st.metric("Total", f"R$ {total_entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        except Exception as e:
-            st.error(f"Erro nas entradas: {e}")
+    df_saida = carregar_tabela("saida")
+    df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
+    saidas_dia = df_saida[df_saida["Data"].dt.date == filtro_data]
+    total_saidas = saidas_dia["Valor"].sum() if not saidas_dia.empty else 0.0
 
-    with col2:
-        st.markdown("### 📤 Saídas")
-        try:
-            df_saida = carregar_tabela("saida")
-            df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
-            saidas_dia = df_saida[df_saida["Data"].dt.date == filtro_data]
-            if saidas_dia.empty:
-                st.info("Nenhuma saída.")
-            else:
-                total_saidas = saidas_dia["Valor"].sum()
-                st.metric("Total", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        except Exception as e:
-            st.error(f"Erro nas saídas: {e}")
+    df_mercadoria = carregar_tabela("mercadorias")
+    df_mercadoria["Data"] = pd.to_datetime(df_mercadoria["Data"], errors="coerce")
+    mercadorias_dia = df_mercadoria[df_mercadoria["Data"].dt.date == filtro_data]
+    total_mercadorias = mercadorias_dia["Valor_Mercadoria"].sum() if not mercadorias_dia.empty else 0.0
 
-    with col3:
-        st.markdown("### 📦 Mercadorias")
-        try:
-            df_mercadoria = carregar_tabela("mercadorias")
-            df_mercadoria["Data"] = pd.to_datetime(df_mercadoria["Data"], errors="coerce")
-            mercadorias_dia = df_mercadoria[df_mercadoria["Data"].dt.date == filtro_data]
-            if mercadorias_dia.empty:
-                st.info("Nenhuma mercadoria.")
-            else:
-                total_mercadorias = mercadorias_dia["Valor_Mercadoria"].sum()
-                st.metric("Total", f"R$ {total_mercadorias:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        except Exception as e:
-            st.error(f"Erro nas mercadorias: {e}")
+    # --- Bloco visual bonito para Entradas/Saídas/Mercadorias ---
+    bloco_destaque_3(
+        "💰 Movimentações do Dia",
+        [
+            ("Entradas", f"R$ {total_entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Saídas", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Mercadorias", f"R$ {total_mercadorias:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        ]
+    )
 
-    # === Caixa 1 e Caixa 2 lado a lado ===
-    st.markdown("---")
-    st.markdown("### 💰 Resumo de Caixa")
-    col4, col5 = st.columns(2)
+# === Caixa 1 e Caixa 2: último saldo cadastrado manualmente até a data ===
+    # === Caixa 1 e Caixa 2: saldo cadastrado manualmente no dia ===
+    with sqlite3.connect(caminho_banco) as conn:
+        df_caixas = pd.read_sql("SELECT * FROM saldos_caixas", conn)
+        df_caixas["data"] = pd.to_datetime(df_caixas["data"], errors="coerce")
+        caixas_do_dia = df_caixas[df_caixas["data"].dt.date == filtro_data]
 
-    with col4:
-        try:
-            with sqlite3.connect(caminho_banco) as conn:
-                df_caixa = pd.read_sql("SELECT * FROM saldos_caixas", conn)
-                df_caixa["data"] = pd.to_datetime(df_caixa["data"], errors="coerce")
-                caixa_dia = df_caixa[df_caixa["data"].dt.date == filtro_data]
-            if not caixa_dia.empty:
-                valor_caixa = caixa_dia.iloc[0]["caixa"]
-                st.metric("Caixa (Loja)", f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        except Exception as e:
-            st.error(f"Erro no caixa: {e}")
+    st.markdown("### 💵 Valor cadastrado em Caixa no Dia")
+    col1, col2 = st.columns(2)
+    if not caixas_do_dia.empty:
+        valor_caixa = caixas_do_dia.iloc[0]["caixa"]
+        valor_caixa2 = caixas_do_dia.iloc[0]["caixa_2"]
+        with col1:
+            st.success(f"Caixa (Loja): R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        with col2:
+            st.info(f"Caixa 2 (Levado): R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    else:
+        with col1:
+            st.warning("Nenhum valor cadastrado para o Caixa neste dia.")
+        with col2:
+            st.warning("Nenhum valor cadastrado para o Caixa 2 neste dia.")
 
-    with col5:
-        try:
-            if not caixa_dia.empty:
-                valor_caixa2 = caixa_dia.iloc[0]["caixa_2"]
-                st.metric("Caixa 2 (Levado)", f"R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        except Exception as e:
-            st.error(f"Erro no caixa 2: {e}")
+    # === Bancos: valores lado a lado (Bloco de 4 colunas) ===
+    with sqlite3.connect(caminho_banco) as conn:
+        df_bancos = pd.read_sql("SELECT * FROM saldos_bancos", conn)
+        df_bancos["data"] = pd.to_datetime(df_bancos["data"], errors="coerce")
 
-    # === Bancos: valores lado a lado ===
-    st.markdown("---")
-    st.markdown("### 🏦 Depósitos em Bancos")
-    try:
-        with sqlite3.connect(caminho_banco) as conn:
-            df_bancos = pd.read_sql("SELECT * FROM saldos_bancos", conn)
-            df_bancos["data"] = pd.to_datetime(df_bancos["data"], errors="coerce")
-            bancos_dia = df_bancos[df_bancos["data"].dt.date == filtro_data]
+    bancos_dia = df_bancos[df_bancos["data"].dt.date == filtro_data]
+    if not bancos_dia.empty:
+        saldo_banco_1 = bancos_dia.iloc[0]['banco_1']
+        saldo_banco_2 = bancos_dia.iloc[0]['banco_2']
+        saldo_banco_3 = bancos_dia.iloc[0]['banco_3']
+        saldo_banco_4 = bancos_dia.iloc[0]['banco_4']
+    else:
+        saldo_banco_1 = saldo_banco_2 = saldo_banco_3 = saldo_banco_4 = 0.0
 
-        if not bancos_dia.empty:
-            col_b1, col_b2, col_b3, col_b4 = st.columns(4)
-            with col_b1:
-                st.metric("Banco 1", f"R$ {bancos_dia.iloc[0]['banco_1']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            with col_b2:
-                st.metric("Banco 2", f"R$ {bancos_dia.iloc[0]['banco_2']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            with col_b3:
-                st.metric("Banco 3", f"R$ {bancos_dia.iloc[0]['banco_3']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-            with col_b4:
-                st.metric("Banco 4", f"R$ {bancos_dia.iloc[0]['banco_4']:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        else:
-            st.info("Nenhum depósito registrado.")
-    except Exception as e:
-        st.error(f"Erro nos bancos: {e}")
+    bloco_destaque_4(
+        "🏦 Bancos no Dia",
+        [
+            ("Banco 1", f"R$ {saldo_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Banco 2", f"R$ {saldo_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Banco 3", f"R$ {saldo_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+            ("Banco 4", f"R$ {saldo_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        ]
+    )
 
     # === Cadastro de Entrada ========================================================================================
     st.markdown("### 💼 Cadastrar Entrada")
@@ -1142,19 +1125,12 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
                     st.success(f"✅ Entrada cadastrada com sucesso! → Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}")
                 except Exception as e:
                     st.error(f"Erro ao salvar entrada: {e}")
-    
-# === Cadastro de Saída ==============================================================================================
-if st.session_state.get("mostrar_lancamentos_do_dia", False):
 
-    # Usa a data já definida em "Lançamentos do Dia"
-    data_saida = st.session_state.get("data_lancamento", date.today())
-
+    # === Cadastro de Saída ==========================================================================================
     st.markdown("### 📤 Cadastro de Saída")
-
     valor_saida = st.number_input("💵 Valor", min_value=0.0, step=0.01)
     forma_pagamento = st.selectbox("💳 Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"])
 
-    # Exibe logo abaixo da forma de pagamento
     banco = None
     cartao = None
     parcelas = 1
@@ -1167,7 +1143,6 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
         if cartoes_df.empty:
             st.warning("⚠️ Nenhum cartão cadastrado. Cadastre em 'Ver Cartão de Crédito'.")
             st.stop()
-
         nome_cartoes = cartoes_df["nome"].tolist()
         cartao = st.selectbox("🏦 Qual cartão?", nome_cartoes)
 
@@ -1179,32 +1154,25 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
     descricao = st.text_input("📝 Descrição")
 
     if st.button("💾 Salvar Saída"):
-
         try:
             with sqlite3.connect(caminho_banco) as conn:
-
                 if forma_pagamento in ["DINHEIRO", "PIX", "DÉBITO"]:
                     conn.execute("""
                         INSERT INTO saida (Data, Valor, Forma_Pagamento, Categoria, Subcategoria, Descricao, Parcelas, Banco, Cartao)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        str(data_saida), valor_saida, forma_pagamento, categoria,
+                        str(data_lancamento), valor_saida, forma_pagamento, categoria,
                         subcategoria, descricao, 1, banco, cartao
                     ))
-
                     st.success("✅ Saída registrada com sucesso!")
-
                 elif forma_pagamento == "CRÉDITO":
                     cartao_info = cartoes_df[cartoes_df["nome"] == cartao].iloc[0]
                     fechamento = int(cartao_info["fechamento"])
-
-                    if data_saida.day >= fechamento:
-                        data_primeira = (data_saida + relativedelta(months=2)).replace(day=fechamento)
+                    if data_lancamento.day >= fechamento:
+                        data_primeira = (data_lancamento + relativedelta(months=2)).replace(day=fechamento)
                     else:
-                        data_primeira = (data_saida + relativedelta(months=1)).replace(day=fechamento)
-
+                        data_primeira = (data_lancamento + relativedelta(months=1)).replace(day=fechamento)
                     valor_parcela = round(valor_saida / parcelas, 2)
-
                     for i in range(parcelas):
                         data_parcela = data_primeira + relativedelta(months=i)
                         conn.execute("""
@@ -1215,100 +1183,55 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
                             str(data_parcela), valor_parcela, descricao, cartao,
                             i + 1, parcelas, categoria, subcategoria
                         ))
-
                     st.success(f"✅ Compra no crédito lançada com sucesso em {parcelas}x!")
-
                 conn.commit()
-
         except Exception as e:
             st.error(f"❌ Erro ao salvar: {e}")
 
-# === Transferência de Caixa para Caixa 2 ==================================================================
-    if perfil_usuario in ["Administrador", "Gerente"]:   
-        st.markdown("---")
-        st.markdown("### 💸Cadastrar Caixa 2")
+    # === Transferência de Caixa para Caixa 2 ==================================================================
+    
 
-        valor_transferencia = st.number_input("Valor a levar para casa (será transferido do Caixa para o Caixa 2)", min_value=0.0, step=10.0, format="%.2f")
-        
-        if st.button("📤 Levar dinheiro para o Caixa 2"):
-            data_hoje_str = str(date.today())
 
-            try:
-                with sqlite3.connect(caminho_banco) as conn:
-                    # Busca saldos atuais da tabela
-                    cursor = conn.execute("SELECT caixa, caixa_2 FROM saldos_caixas WHERE data = ?", (data_hoje_str,))
-                    resultado = cursor.fetchone()
-
-                    if resultado:
-                        novo_caixa = max(0.0, resultado[0] - valor_transferencia)
-                        novo_caixa2 = resultado[1] + valor_transferencia
-                    else:
-                        st.warning("⚠️ Nenhum valor de caixa encontrado para hoje. Cadastre primeiro em 'Cadastro'.")
-                        st.stop()
-
-                    # Atualiza os valores
-                    conn.execute("""
-                        UPDATE saldos_caixas
-                        SET caixa = ?, caixa_2 = ?
-                        WHERE data = ?
-                    """, (novo_caixa, novo_caixa2, data_hoje_str))
-                    conn.commit()
-
-                st.success("✅ Valor transferido com sucesso!")
-                st.rerun()
-
-            except Exception as e:
-                st.error(f"Erro ao transferir: {e}")
-
-# === Depósito do Caixa 2 em um Banco ========================================================================
+    # === Depósito do Caixa 2 em um Banco ========================================================================
     if perfil_usuario in ["Administrador", "Gerente"]:
         st.markdown("---")
         st.markdown("### 💸 Depositar Caixa 2 em um Banco")
 
-        data_deposito = st.date_input("Data do Depósito", value=date.today(), key="data_deposito_caixa2")
+        data_deposito = st.date_input("Data do Depósito", value=filtro_data, key="data_deposito_caixa2")
         valor_deposito = st.number_input("Valor a Depositar", min_value=0.0, step=10.0, format="%.2f", key="valor_deposito_caixa2")
         banco_destino = st.selectbox("Banco de Destino", ["Banco 1", "Banco 2", "Banco 3", "Banco 4"], key="banco_destino_caixa2")
 
         if st.button("🏦 Realizar Depósito"):
-            data_str = str(data_deposito)
-
             try:
-                with sqlite3.connect(caminho_banco) as conn:
-                    cursor = conn.execute("SELECT caixa_2 FROM saldos_caixas WHERE data = ?", (data_str,))
-                    resultado = cursor.fetchone()
-
-                    if resultado:
-                        saldo_caixa2 = resultado[0]
-                    else:
-                        st.warning("⚠️ Nenhum saldo registrado para essa data. Cadastre primeiro o valor do Caixa 2.")
-                        st.stop()
-
-                    if valor_deposito > saldo_caixa2:
-                        st.error("❌ Valor de depósito maior que o saldo disponível no Caixa 2.")
-                        st.stop()
-
+                saldo_caixa2 = valor_caixa2  # Já buscou acima
+                if valor_deposito > saldo_caixa2:
+                    st.error("❌ Valor de depósito maior que o saldo disponível no Caixa 2.")
+                else:
                     novo_saldo_caixa2 = saldo_caixa2 - valor_deposito
-
-                    conn.execute("""
-                        INSERT INTO saldos_caixas (data, caixa, caixa_2)
-                        VALUES (?, 0.0, ?)
-                        ON CONFLICT(data) DO UPDATE SET
-                            caixa_2 = excluded.caixa_2
-                    """, (data_str, novo_saldo_caixa2))
-
-                    col_banco = banco_destino.lower().replace(" ", "_")
-                    conn.execute(f"""
-                        INSERT INTO saldos_bancos (data, {col_banco})
-                        VALUES (?, ?)
-                        ON CONFLICT(data) DO UPDATE SET
-                            {col_banco} = {col_banco} + ?
-                    """, (data_str, valor_deposito, valor_deposito))
-
-                    conn.commit()
-
-                st.success(f"✅ R$ {valor_deposito:,.2f} depositado do Caixa 2 para {banco_destino} com sucesso!".replace(",", "X").replace(".", ",").replace("X", "."))
-                st.rerun()
-
+                    with sqlite3.connect(caminho_banco) as conn:
+                        conn.execute(
+                            """
+                            UPDATE saldos_caixas SET caixa_2 = ? 
+                            WHERE substr(data,1,10) = ?
+                            """, 
+                            (novo_saldo_caixa2, str(filtro_data))
+                        )
+                        # Atualiza saldo do banco
+                        col_banco = banco_destino.lower().replace(" ", "_")
+                        df_bancos = pd.read_sql("SELECT * FROM saldos_bancos WHERE substr(data,1,10) = ?", conn, params=(str(filtro_data),))
+                        saldo_banco = df_bancos.iloc[0][col_banco] if not df_bancos.empty else 0.0
+                        novo_saldo_banco = saldo_banco + valor_deposito
+                        conn.execute(
+                            f"""
+                            INSERT INTO saldos_bancos (data, {col_banco})
+                            VALUES (?, ?)
+                            ON CONFLICT(data) DO UPDATE SET
+                                {col_banco} = ?
+                            """, (str(filtro_data), novo_saldo_banco, novo_saldo_banco)
+                        )
+                        conn.commit()
+                    st.success(f"✅ R$ {valor_deposito:,.2f} depositado do Caixa 2 para {banco_destino} com sucesso!".replace(",", "X").replace(".", ",").replace("X", "."))
+                    st.rerun()
             except Exception as e:
                 st.error(f"Erro ao depositar: {e}")
 
@@ -1336,9 +1259,11 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
                                 Previsao_Faturamento, Faturamento, Previsao_Recebimento, Recebimento,
                                 Pedido, Nota_Fiscal)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (str(data_lancamento), colecao, fornecedor, valor_mercadoria, frete,
+                        """, (
+                            str(data_lancamento), colecao, fornecedor, valor_mercadoria, frete,
                             previsao_faturamento, faturamento, previsao_recebimento, recebimento,
-                            pedido, nota_fiscal))
+                            pedido, nota_fiscal
+                        ))
                         conn.commit()
                     st.success("✅ Mercadoria cadastrada com sucesso!")
                     st.rerun()
@@ -1924,26 +1849,34 @@ if st.session_state.get("mostrar_cadastro_caixa", False) and perfil_usuario == "
         resultado = cursor.fetchone()
 
     if resultado:
-        st.info("🔄 Valores já cadastrados. Você pode atualizar.")
-        caixa = st.number_input("Caixa (dinheiro na loja)", value=resultado[0], step=10.0, format="%.2f")
-        caixa_2 = st.number_input("Caixa 2 (dinheiro que levou pra casa)", value=resultado[1], step=10.0, format="%.2f")
+        st.info("🔄 Valores já cadastrados. O valor digitado será **somado** ao valor já existente.")
+        valor_novo_caixa = st.number_input("Adicionar ao Caixa (dinheiro na loja)", min_value=0.0, step=10.0, format="%.2f")
+        valor_novo_caixa_2 = st.number_input("Adicionar ao Caixa 2 (dinheiro que levou pra casa)", min_value=0.0, step=10.0, format="%.2f")
+        valor_final_caixa = resultado[0] + valor_novo_caixa
+        valor_final_caixa_2 = resultado[1] + valor_novo_caixa_2
     else:
-        st.warning("⚠️ Nenhum valor cadastrado para essa data.")
-        caixa = st.number_input("Caixa (dinheiro na loja)", step=10.0, format="%.2f")
-        caixa_2 = st.number_input("Caixa 2 (dinheiro que levou pra casa)", step=10.0, format="%.2f")
+        st.warning("⚠️ Nenhum valor cadastrado para essa data. Informe o valor inicial.")
+        valor_final_caixa = st.number_input("Caixa (dinheiro na loja)", min_value=0.0, step=10.0, format="%.2f")
+        valor_final_caixa_2 = st.number_input("Caixa 2 (dinheiro que levou pra casa)", min_value=0.0, step=10.0, format="%.2f")
 
     if st.button("💾 Salvar Valores"):
         try:
             with sqlite3.connect(caminho_banco) as conn:
-                conn.execute("""
-                    INSERT INTO saldos_caixas (data, caixa, caixa_2)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(data) DO UPDATE SET
-                        caixa = excluded.caixa,
-                        caixa_2 = excluded.caixa_2;
-                """, (data_caixa_str, caixa, caixa_2))
+                if resultado:
+                    # Atualiza somando ao valor anterior
+                    conn.execute("""
+                        UPDATE saldos_caixas
+                        SET caixa = ?, caixa_2 = ?
+                        WHERE data = ?
+                    """, (valor_final_caixa, valor_final_caixa_2, data_caixa_str))
+                else:
+                    # Insere novo registro
+                    conn.execute("""
+                        INSERT INTO saldos_caixas (data, caixa, caixa_2)
+                        VALUES (?, ?, ?)
+                    """, (data_caixa_str, valor_final_caixa, valor_final_caixa_2))
                 conn.commit()
-            st.success("✅ Valores salvos com sucesso!")
+            st.success("✅ Valores somados e salvos com sucesso!")
         except Exception as e:
             st.error(f"Erro ao salvar: {e}")
 
