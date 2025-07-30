@@ -1000,275 +1000,115 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
     data_lancamento = st.date_input("📅 Data do Lançamento", value=date.today(), key="data_lancamento_input")
     filtro_data = data_lancamento
 
-    # === Resumo do Dia ==============================================================================================
-    st.markdown("## 📊 Resumo do Dia")
-
-    # --- Dados de Entradas, Saídas e Mercadorias ---
-    df_entrada = carregar_tabela("entrada")
-    df_entrada["Data"] = pd.to_datetime(df_entrada["Data"], errors="coerce")
-    entradas_dia = df_entrada[df_entrada["Data"].dt.date == filtro_data]
-    total_entradas = entradas_dia["Valor"].sum() if not entradas_dia.empty else 0.0
-
-    df_saida = carregar_tabela("saida")
-    df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
-    saidas_dia = df_saida[df_saida["Data"].dt.date == filtro_data]
-    total_saidas = saidas_dia["Valor"].sum() if not saidas_dia.empty else 0.0
-
-    df_mercadoria = carregar_tabela("mercadorias")
-    df_mercadoria["Data"] = pd.to_datetime(df_mercadoria["Data"], errors="coerce")
-    mercadorias_dia = df_mercadoria[df_mercadoria["Data"].dt.date == filtro_data]
-    total_mercadorias = mercadorias_dia["Valor_Mercadoria"].sum() if not mercadorias_dia.empty else 0.0
-
-    # --- Bloco visual bonito para Entradas/Saídas/Mercadorias ---
-    bloco_destaque_3(
-        "💰 Movimentações do Dia",
-        [
-            ("Entradas", f"R$ {total_entradas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Saídas", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Mercadorias", f"R$ {total_mercadorias:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        ]
-    )
-
-# === Caixa 1 e Caixa 2: último saldo cadastrado manualmente até a data ===
-    # === Caixa 1 e Caixa 2: saldo cadastrado manualmente no dia ===
-    with sqlite3.connect(caminho_banco) as conn:
-        df_caixas = pd.read_sql("SELECT * FROM saldos_caixas", conn)
-        df_caixas["data"] = pd.to_datetime(df_caixas["data"], errors="coerce")
-        caixas_do_dia = df_caixas[df_caixas["data"].dt.date == filtro_data]
-
-    st.markdown("### 💵 Valor cadastrado em Caixa no Dia")
-    col1, col2 = st.columns(2)
-    if not caixas_do_dia.empty:
-        valor_caixa = caixas_do_dia.iloc[0]["caixa"]
-        valor_caixa2 = caixas_do_dia.iloc[0]["caixa_2"]
-        with col1:
-            st.success(f"Caixa (Loja): R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        with col2:
-            st.info(f"Caixa 2 (Levado): R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    else:
-        with col1:
-            st.warning("Nenhum valor cadastrado para o Caixa neste dia.")
-        with col2:
-            st.warning("Nenhum valor cadastrado para o Caixa 2 neste dia.")
-
-    # === Bancos: valores lado a lado (Bloco de 4 colunas) ===
-    with sqlite3.connect(caminho_banco) as conn:
-        df_bancos = pd.read_sql("SELECT * FROM saldos_bancos", conn)
-        df_bancos["data"] = pd.to_datetime(df_bancos["data"], errors="coerce")
-
-    bancos_dia = df_bancos[df_bancos["data"].dt.date == filtro_data]
-    if not bancos_dia.empty:
-        saldo_banco_1 = bancos_dia.iloc[0]['banco_1']
-        saldo_banco_2 = bancos_dia.iloc[0]['banco_2']
-        saldo_banco_3 = bancos_dia.iloc[0]['banco_3']
-        saldo_banco_4 = bancos_dia.iloc[0]['banco_4']
-    else:
-        saldo_banco_1 = saldo_banco_2 = saldo_banco_3 = saldo_banco_4 = 0.0
-
-    bloco_destaque_4(
-        "🏦 Bancos no Dia",
-        [
-            ("Banco 1", f"R$ {saldo_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Banco 2", f"R$ {saldo_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Banco 3", f"R$ {saldo_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Banco 4", f"R$ {saldo_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        ]
-    )
-
-    # === Cadastro de Entrada ========================================================================================
-    st.markdown("### 💼 Cadastrar Entrada")
-    valor_entrada = st.number_input("Valor", min_value=0.0, step=0.01, key="valor_entrada")
-    forma_pagamento = st.selectbox("Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"], key="forma_pagamento")
-
-    # === Definir campos condicionalmente ===
-    parcelas = 1
-    bandeira = ""
-
-    if forma_pagamento == "CRÉDITO":
-        parcelas = st.selectbox("Parcelas", list(range(1, 13)), key="parcelas")
-        bandeira = st.selectbox("Bandeira do Cartão (Crédito)", ["VISA", "MASTERCARD", "ELO", "AMEX", "DINERS CLUBE"], key="bandeira_credito")
-
-    elif forma_pagamento == "DÉBITO":
-        bandeira = st.selectbox("Bandeira do Cartão (Débito)", ["VISA", "MASTERCARD", "ELO"], key="bandeira_debito")
-
-    # === Cadastro de Entrada ===
-    confirmar = False
-    if valor_entrada > 0:
-        resumo = f"Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}"
-        st.info(f"✅ Confirme os dados da entrada: → {resumo}")
-        confirmar = st.checkbox("Está tudo certo com os dados acima?")
-
-    with st.form("form_entrada"):
-        submitted_entrada = st.form_submit_button("Salvar Entrada")
-
-        if submitted_entrada and confirmar:
-            if valor_entrada <= 0:
-                st.warning("⚠️ O valor deve ser maior que zero.")
-            else:
-                try:
-                    with sqlite3.connect(caminho_banco) as conn:
-                        usuario = st.session_state.usuario_logado["nome"]  # ← nome de quem está logado
-
-                        conn.execute("""
-                            INSERT INTO entrada (Data, Valor, Forma_de_Pagamento, Parcelas, Bandeira, Usuario)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, (
-                            str(data_lancamento),
-                            float(valor_entrada),
-                            str(forma_pagamento).upper(),
-                            int(parcelas),
-                            str(bandeira).upper(),
-                            usuario
-                        ))
-                        conn.commit()
-
-                    st.success(f"✅ Entrada cadastrada com sucesso! → Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}")
-                except Exception as e:
-                    st.error(f"Erro ao salvar entrada: {e}")
-
-    # === Cadastro de Saída ==========================================================================================
-    st.markdown("### 📤 Cadastro de Saída")
-    valor_saida = st.number_input("💵 Valor", min_value=0.0, step=0.01)
-    forma_pagamento = st.selectbox("💳 Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"])
-
-    banco = None
-    cartao = None
-    parcelas = 1
-
-    if forma_pagamento == "PIX":
-        banco = st.selectbox("🏦 Qual banco (PIX)?", ["Banco 1", "Banco 2", "Banco 3"])
-
-    elif forma_pagamento in ["DÉBITO", "CRÉDITO"]:
-        cartoes_df = carregar_cartoes_credito()
-        if cartoes_df.empty:
-            st.warning("⚠️ Nenhum cartão cadastrado. Cadastre em 'Ver Cartão de Crédito'.")
-            st.stop()
-        nome_cartoes = cartoes_df["nome"].tolist()
-        cartao = st.selectbox("🏦 Qual cartão?", nome_cartoes)
-
-        if forma_pagamento == "CRÉDITO":
-            parcelas = st.selectbox("🔢 Parcelas", list(range(1, 13)))
-
-    categoria = st.text_input("🏷️ Categoria")
-    subcategoria = st.text_input("🔖 Subcategoria")
-    descricao = st.text_input("📝 Descrição")
-
-    if st.button("💾 Salvar Saída"):
-        try:
-            with sqlite3.connect(caminho_banco) as conn:
-                if forma_pagamento in ["DINHEIRO", "PIX", "DÉBITO"]:
-                    conn.execute("""
-                        INSERT INTO saida (Data, Valor, Forma_Pagamento, Categoria, Subcategoria, Descricao, Parcelas, Banco, Cartao)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        str(data_lancamento), valor_saida, forma_pagamento, categoria,
-                        subcategoria, descricao, 1, banco, cartao
-                    ))
-                    st.success("✅ Saída registrada com sucesso!")
-                elif forma_pagamento == "CRÉDITO":
-                    cartao_info = cartoes_df[cartoes_df["nome"] == cartao].iloc[0]
-                    fechamento = int(cartao_info["fechamento"])
-                    if data_lancamento.day >= fechamento:
-                        data_primeira = (data_lancamento + relativedelta(months=2)).replace(day=fechamento)
-                    else:
-                        data_primeira = (data_lancamento + relativedelta(months=1)).replace(day=fechamento)
-                    valor_parcela = round(valor_saida / parcelas, 2)
-                    for i in range(parcelas):
-                        data_parcela = data_primeira + relativedelta(months=i)
-                        conn.execute("""
-                            INSERT INTO contas_pagar (
-                                Data_Vencimento, Valor, Descricao, Cartao, Parcela, Total_Parcelas, Categoria, Subcategoria
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            str(data_parcela), valor_parcela, descricao, cartao,
-                            i + 1, parcelas, categoria, subcategoria
-                        ))
-                    st.success(f"✅ Compra no crédito lançada com sucesso em {parcelas}x!")
-                conn.commit()
-        except Exception as e:
-            st.error(f"❌ Erro ao salvar: {e}")
-
-    # === Transferência de Caixa para Caixa 2 ==================================================================
-    
 
 
-    # === Depósito do Caixa 2 em um Banco ========================================================================
-    if perfil_usuario in ["Administrador", "Gerente"]:
-        st.markdown("---")
-        st.markdown("### 💸 Depositar Caixa 2 em um Banco")
+    # # === Cadastro de Entrada ========================================================================================
+    # st.markdown("### 💼 Cadastrar Entrada")
+    # valor_entrada = st.number_input("Valor", min_value=0.0, step=0.01, key="valor_entrada")
+    # forma_pagamento = st.selectbox("Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"], key="forma_pagamento")
 
-        data_deposito = st.date_input("Data do Depósito", value=filtro_data, key="data_deposito_caixa2")
-        valor_deposito = st.number_input("Valor a Depositar", min_value=0.0, step=10.0, format="%.2f", key="valor_deposito_caixa2")
-        banco_destino = st.selectbox("Banco de Destino", ["Banco 1", "Banco 2", "Banco 3", "Banco 4"], key="banco_destino_caixa2")
+    # # === Definir campos condicionalmente ===
+    # parcelas = 1
+    # bandeira = ""
 
-        if st.button("🏦 Realizar Depósito"):
-            try:
-                saldo_caixa2 = valor_caixa2  # Já buscou acima
-                if valor_deposito > saldo_caixa2:
-                    st.error("❌ Valor de depósito maior que o saldo disponível no Caixa 2.")
-                else:
-                    novo_saldo_caixa2 = saldo_caixa2 - valor_deposito
-                    with sqlite3.connect(caminho_banco) as conn:
-                        conn.execute(
-                            """
-                            UPDATE saldos_caixas SET caixa_2 = ? 
-                            WHERE substr(data,1,10) = ?
-                            """, 
-                            (novo_saldo_caixa2, str(filtro_data))
-                        )
-                        # Atualiza saldo do banco
-                        col_banco = banco_destino.lower().replace(" ", "_")
-                        df_bancos = pd.read_sql("SELECT * FROM saldos_bancos WHERE substr(data,1,10) = ?", conn, params=(str(filtro_data),))
-                        saldo_banco = df_bancos.iloc[0][col_banco] if not df_bancos.empty else 0.0
-                        novo_saldo_banco = saldo_banco + valor_deposito
-                        conn.execute(
-                            f"""
-                            INSERT INTO saldos_bancos (data, {col_banco})
-                            VALUES (?, ?)
-                            ON CONFLICT(data) DO UPDATE SET
-                                {col_banco} = ?
-                            """, (str(filtro_data), novo_saldo_banco, novo_saldo_banco)
-                        )
-                        conn.commit()
-                    st.success(f"✅ R$ {valor_deposito:,.2f} depositado do Caixa 2 para {banco_destino} com sucesso!".replace(",", "X").replace(".", ",").replace("X", "."))
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao depositar: {e}")
+    # if forma_pagamento == "CRÉDITO":
+    #     parcelas = st.selectbox("Parcelas", list(range(1, 13)), key="parcelas")
+    #     bandeira = st.selectbox("Bandeira do Cartão (Crédito)", ["VISA", "MASTERCARD", "ELO", "AMEX", "DINERS CLUBE"], key="bandeira_credito")
 
-        # === Cadastro de Mercadoria ===
-        st.markdown("### 📦 Cadastrar Mercadoria")
-        with st.form("form_mercadoria"):
-            colecao = st.text_input("Coleção")
-            fornecedor = st.text_input("Fornecedor")
-            valor_mercadoria = st.number_input("Valor das Mercadorias", min_value=0.0, step=0.01)
-            frete = st.number_input("Frete", min_value=0.0, step=0.01)
-            previsao_faturamento = st.number_input("Previsão de Faturamento", min_value=0.0, step=0.01)
-            faturamento = st.number_input("Faturamento", min_value=0.0, step=0.01)
-            previsao_recebimento = st.number_input("Previsão de Recebimento", min_value=0.0, step=0.01)
-            recebimento = st.number_input("Recebimento", min_value=0.0, step=0.01)
-            pedido = st.text_input("Número do Pedido")
-            nota_fiscal = st.text_input("Número da Nota Fiscal")
-            submitted_mercadoria = st.form_submit_button("Salvar Mercadoria")
+    # elif forma_pagamento == "DÉBITO":
+    #     bandeira = st.selectbox("Bandeira do Cartão (Débito)", ["VISA", "MASTERCARD", "ELO"], key="bandeira_debito")
 
-            if submitted_mercadoria:
-                try:
-                    with sqlite3.connect(caminho_banco) as conn:
-                        conn.execute("""
-                            INSERT INTO mercadorias (
-                                Data, Colecao, Fornecedor, Valor_Mercadoria, Frete,
-                                Previsao_Faturamento, Faturamento, Previsao_Recebimento, Recebimento,
-                                Pedido, Nota_Fiscal)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            str(data_lancamento), colecao, fornecedor, valor_mercadoria, frete,
-                            previsao_faturamento, faturamento, previsao_recebimento, recebimento,
-                            pedido, nota_fiscal
-                        ))
-                        conn.commit()
-                    st.success("✅ Mercadoria cadastrada com sucesso!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao salvar mercadoria: {e}")
+    # # === Cadastro de Entrada ===
+    # confirmar = False
+    # if valor_entrada > 0:
+    #     resumo = f"Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}"
+    #     st.info(f"✅ Confirme os dados da entrada: → {resumo}")
+    #     confirmar = st.checkbox("Está tudo certo com os dados acima?")
+
+    # with st.form("form_entrada"):
+    #     submitted_entrada = st.form_submit_button("Salvar Entrada")
+
+    #     if submitted_entrada and confirmar:
+    #         if valor_entrada <= 0:
+    #             st.warning("⚠️ O valor deve ser maior que zero.")
+    #         else:
+    #             try:
+    #                 with sqlite3.connect(caminho_banco) as conn:
+    #                     usuario = st.session_state.usuario_logado["nome"]  # ← nome de quem está logado
+
+    #                     conn.execute("""
+    #                         INSERT INTO entrada (Data, Valor, Forma_de_Pagamento, Parcelas, Bandeira, Usuario)
+    #                         VALUES (?, ?, ?, ?, ?, ?)
+    #                     """, (
+    #                         str(data_lancamento),
+    #                         float(valor_entrada),
+    #                         str(forma_pagamento).upper(),
+    #                         int(parcelas),
+    #                         str(bandeira).upper(),
+    #                         usuario
+    #                     ))
+    #                     conn.commit()
+
+    #                 st.success(f"✅ Entrada cadastrada com sucesso! → Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}")
+    #             except Exception as e:
+    #                 st.error(f"Erro ao salvar entrada: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# # === Cadastro de Mercadoria ===
+#         st.markdown("### 📦 Cadastrar Mercadoria")
+#         with st.form("form_mercadoria"):
+#             colecao = st.text_input("Coleção")
+#             fornecedor = st.text_input("Fornecedor")
+#             valor_mercadoria = st.number_input("Valor das Mercadorias", min_value=0.0, step=0.01)
+#             frete = st.number_input("Frete", min_value=0.0, step=0.01)
+#             previsao_faturamento = st.number_input("Previsão de Faturamento", min_value=0.0, step=0.01)
+#             faturamento = st.number_input("Faturamento", min_value=0.0, step=0.01)
+#             previsao_recebimento = st.number_input("Previsão de Recebimento", min_value=0.0, step=0.01)
+#             recebimento = st.number_input("Recebimento", min_value=0.0, step=0.01)
+#             pedido = st.text_input("Número do Pedido")
+#             nota_fiscal = st.text_input("Número da Nota Fiscal")
+#             submitted_mercadoria = st.form_submit_button("Salvar Mercadoria")
+
+#             if submitted_mercadoria:
+#                 try:
+#                     with sqlite3.connect(caminho_banco) as conn:
+#                         conn.execute("""
+#                             INSERT INTO mercadorias (
+#                                 Data, Colecao, Fornecedor, Valor_Mercadoria, Frete,
+#                                 Previsao_Faturamento, Faturamento, Previsao_Recebimento, Recebimento,
+#                                 Pedido, Nota_Fiscal)
+#                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+#                         """, (
+#                             str(data_lancamento), colecao, fornecedor, valor_mercadoria, frete,
+#                             previsao_faturamento, faturamento, previsao_recebimento, recebimento,
+#                             pedido, nota_fiscal
+#                         ))
+#                         conn.commit()
+#                     st.success("✅ Mercadoria cadastrada com sucesso!")
+#                     st.rerun()
+#                 except Exception as e:
+#                     st.error(f"Erro ao salvar mercadoria: {e}")
 
 
 
