@@ -691,7 +691,6 @@ if opcao == "💼 Fechamento de Caixa":
     data_fechamento = st.date_input("Data do Fechamento", value=date.today())
     st.markdown(f"🗓️ **Fechamento do dia:** {data_fechamento.strftime('%d/%m/%Y')}")
     data_fechamento_str = str(data_fechamento)
-    data_util_anterior = ultimo_dia_util(data_fechamento)
 
     # Entradas
     df_entrada = carregar_tabela("entrada")
@@ -707,75 +706,69 @@ if opcao == "💼 Fechamento de Caixa":
         (df_entrada["Data"].dt.date == data_fechamento)
     ]["Valor"].sum() or 0.0
 
-    # Atualiza/Grava caixa_vendas, caixa_total e caixa2_total para a data do fechamento
+    # Buscar os saldos acumulados de todos os dias anteriores (não apenas o último)
     with sqlite3.connect(caminho_banco) as conn:
-        # Busca o valor manual já lançado no caixa para esse dia
-        cursor = conn.execute("SELECT caixa, caixa_2 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
-        resultado_caixa = cursor.fetchone()
-        caixa_manual = float(resultado_caixa[0]) if resultado_caixa else 0.0
-        caixa2_manual = float(resultado_caixa[1]) if resultado_caixa else 0.0
+        df_saldos = pd.read_sql("SELECT * FROM saldos_caixas WHERE data <= ?", conn, params=(data_fechamento_str,))
 
-        # Busca se já existe registro
+    if not df_saldos.empty:
+        soma_caixa_total = (df_saldos["caixa"] + df_saldos["caixa_vendas"]).sum()
+        soma_caixa2_total = (df_saldos["caixa_2"] + df_saldos["caixa2_dia"]).sum()
+    else:
+        soma_caixa_total = 0.0
+        soma_caixa2_total = 0.0
+
+    # Atualiza ou insere os dados acumulando corretamente
+    with sqlite3.connect(caminho_banco) as conn:
         cursor = conn.execute("SELECT 1 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
         existe = cursor.fetchone()
+
         if existe:
             conn.execute("""
-                UPDATE saldos_caixas 
-                SET caixa_vendas = ?, 
-                    caixa_total = ?, 
+                UPDATE saldos_caixas
+                SET caixa_vendas = ?,
+                    caixa_total = ?,
                     caixa2_total = ?
                 WHERE data = ?
             """, (
-                valor_dinheiro, 
-                caixa_manual + valor_dinheiro, 
-                caixa2_manual,   # Atualize se houver transferência no mesmo dia
+                valor_dinheiro,
+                soma_caixa_total,
+                soma_caixa2_total,
                 data_fechamento_str
             ))
         else:
             conn.execute("""
-                INSERT INTO saldos_caixas (data, caixa_vendas, caixa, caixa_total, caixa_2, caixa2_dia, caixa2_total)
-                VALUES (?, ?, 0, ?, 0, 0, ?)
+                INSERT INTO saldos_caixas (
+                    data, caixa_vendas, caixa, caixa_total, caixa_2, caixa2_dia, caixa2_total
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
-                data_fechamento_str, 
-                valor_dinheiro, 
-                valor_dinheiro,     # caixa_total = caixa (zero) + caixa_vendas
-                caixa2_manual       # caixa2_total
+                data_fechamento_str,
+                valor_dinheiro,
+                0.0,
+                soma_caixa_total,
+                0.0,
+                0.0,
+                soma_caixa2_total
             ))
         conn.commit()
 
-    # Busca saldos de caixa e caixa 2 (usar _total!)
+    valor_caixa = soma_caixa_total
+    valor_caixa2 = soma_caixa2_total
+
+    # Buscar os saldos reais dos bancos (corrigido para evitar erro de desempacotamento)
     with sqlite3.connect(caminho_banco) as conn:
         cursor = conn.execute("""
-            SELECT caixa_total, caixa2_total
-            FROM saldos_caixas
-            WHERE data = ?
-            LIMIT 1
-        """, (data_fechamento_str,))
-        resultado = cursor.fetchone()
-
-    if resultado:
-        valor_caixa = resultado[0] or 0.0
-        valor_caixa2 = resultado[1] or 0.0
-    else:
-        st.warning("⚠️ Nenhum saldo encontrado em `saldos_caixas` para a data selecionada.")
-        valor_caixa = 0.0
-        valor_caixa2 = 0.0
-
-    # Saldos dos bancos
-    with sqlite3.connect(caminho_banco) as conn:
-        cursor = conn.execute("""
-            SELECT banco_1, banco_2, banco_3, banco_4 
-            FROM saldos_bancos 
-            WHERE data <= ? 
-            ORDER BY data DESC 
+            SELECT banco_1, banco_2, banco_3, banco_4
+            FROM saldos_bancos
+            WHERE data <= ?
+            ORDER BY data DESC
             LIMIT 1
         """, (data_fechamento_str,))
         resultado_bancos = cursor.fetchone()
 
-        if resultado_bancos:
-            saldo_cad_banco_1, saldo_cad_banco_2, saldo_cad_banco_3, saldo_cad_banco_4 = resultado_bancos
-        else:
-            saldo_cad_banco_1 = saldo_cad_banco_2 = saldo_cad_banco_3 = saldo_cad_banco_4 = 0.0
+        saldo_cad_banco_1 = resultado_bancos[0] if resultado_bancos and len(resultado_bancos) > 0 else 0.0
+        saldo_cad_banco_2 = resultado_bancos[1] if resultado_bancos and len(resultado_bancos) > 1 else 0.0
+        saldo_cad_banco_3 = resultado_bancos[2] if resultado_bancos and len(resultado_bancos) > 2 else 0.0
+        saldo_cad_banco_4 = resultado_bancos[3] if resultado_bancos and len(resultado_bancos) > 3 else 0.0
 
     def calcular_valor_liquido_cartao(df_entrada, data_base):
         cal = BrazilDistritoFederal()
@@ -791,16 +784,10 @@ if opcao == "💼 Fechamento de Caixa":
         ]
         total_liquido = 0.0
         mapeamento_bandeiras = {
-            "MASTERCARD": "MASTER",
-            "MASTER": "MASTER",
-            "DINERS CLUB": "DINERSCLUB",
-            "DINERSCLUB": "DINERSCLUB",
-            "DINERS": "DINERSCLUB",
-            "DINERSCLUBE": "DINERSCLUB",
-            "DINERSCLUBINTERNACIONAL": "DINERSCLUB",
-            "AMEX": "AMEX",
-            "ELO": "ELO",
-            "VISA": "VISA"
+            "MASTERCARD": "MASTER", "MASTER": "MASTER",
+            "DINERS CLUB": "DINERSCLUB", "DINERSCLUB": "DINERSCLUB", "DINERS": "DINERSCLUB",
+            "DINERSCLUBE": "DINERSCLUB", "DINERSCLUBINTERNACIONAL": "DINERSCLUB",
+            "AMEX": "AMEX", "ELO": "ELO", "VISA": "VISA"
         }
         for _, row in df_cartao.iterrows():
             valor = row["Valor"]
@@ -812,9 +799,7 @@ if opcao == "💼 Fechamento de Caixa":
                 cursor = conn.execute("""
                     SELECT taxa_percentual
                     FROM taxas_maquinas
-                    WHERE UPPER(forma_pagamento) = ? 
-                    AND UPPER(bandeira) = ? 
-                    AND parcelas = ?
+                    WHERE UPPER(forma_pagamento) = ? AND UPPER(bandeira) = ? AND parcelas = ?
                 """, (forma, bandeira, parcelas))
                 resultado = cursor.fetchone()
             taxa = resultado[0] if resultado else 0.0
@@ -826,14 +811,11 @@ if opcao == "💼 Fechamento de Caixa":
     valor_banco_1 = saldo_cad_banco_1 + valor_pix + total_cartao_liquido
 
     # Bloco: Valores que Entraram Hoje
-    bloco_destaque_3(
-        "🪙 Valores que Entraram Hoje",
-        [
-            ("Dinheiro", f"R$ {valor_dinheiro:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Pix", f"R$ {valor_pix:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Cartão D-1 (Líquido)", f"R$ {total_cartao_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        ]
-    )
+    bloco_destaque_3("🪙 Valores que Entraram Hoje", [
+        ("Dinheiro", f"R$ {valor_dinheiro:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("Pix", f"R$ {valor_pix:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("Cartão D-1 (Líquido)", f"R$ {total_cartao_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    ])
 
     # Saídas e correções
     df_saida = carregar_tabela("saida")
@@ -846,36 +828,25 @@ if opcao == "💼 Fechamento de Caixa":
     # Saldo total
     saldo_total = valor_caixa + valor_caixa2 + valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4 + total_correcao
 
-    # Bloco: Resumo das Movimentações de Hoje
     entradas_confirmadas = valor_pix + valor_dinheiro + total_cartao_liquido
-    bloco_destaque_3(
-        "🔁 Resumo das Movimentações de Hoje",
-        [
-            ("Entradas", f"R$ {entradas_confirmadas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Saídas", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Correções", f"R$ {total_correcao:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        ]
-    )
+    bloco_destaque_3("🔁 Resumo das Movimentações de Hoje", [
+        ("Entradas", f"R$ {entradas_confirmadas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("Saídas", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("Correções", f"R$ {total_correcao:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    ])
 
-    # Bloco: Saldo em Caixa
-    bloco_destaque_2(
-        "💵 Saldo em Caixa",
+    bloco_destaque_2("💵 Saldo em Caixa",
         "Caixa", f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
         "Caixa 2", f"R$ {valor_caixa2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     )
 
-    # Bloco: Saldo em Bancos
-    bloco_destaque_4(
-        "🏦 Saldo em Bancos",
-        [
-            ("Inter", f"R$ {valor_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Bradesco", f"R$ {saldo_cad_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("InfinitePay", f"R$ {saldo_cad_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
-            ("Outros Bancos", f"R$ {saldo_cad_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        ]
-    )
+    bloco_destaque_4("🏦 Saldo em Bancos", [
+        ("Inter", f"R$ {valor_banco_1:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("Bradesco", f"R$ {saldo_cad_banco_2:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("InfinitePay", f"R$ {saldo_cad_banco_3:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
+        ("Outros Bancos", f"R$ {saldo_cad_banco_4:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    ])
 
-    # Bloco: Saldo Total central, já com checkbox e botão
     confirmar, salvar = bloco_saldo_total("💰 Saldo Total", saldo_total)
 
     if salvar:
@@ -902,7 +873,7 @@ if opcao == "💼 Fechamento de Caixa":
                             saldo_cad_banco_4,
                             float(valor_caixa),
                             valor_caixa2,
-                            valor_pix + valor_dinheiro + total_cartao_liquido,
+                            entradas_confirmadas,
                             total_saidas,
                             total_correcao,
                             saldo_total,
@@ -915,7 +886,6 @@ if opcao == "💼 Fechamento de Caixa":
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
 
-    # --- Tabela de Fechamentos Anteriores ---
     with sqlite3.connect(caminho_banco) as conn:
         df_fechamentos = pd.read_sql("""
             SELECT 
@@ -939,18 +909,9 @@ if opcao == "💼 Fechamento de Caixa":
     if not df_fechamentos.empty:
         st.markdown("### 📋 Fechamentos Anteriores")
         st.dataframe(df_fechamentos.style.format({
-            "Inter": "R$ {:,.2f}",
-            "Bradesco": "R$ {:,.2f}",
-            "InfinitePay": "R$ {:,.2f}",
-            "Outros Bancos": "R$ {:,.2f}",
-            "Caixa": "R$ {:,.2f}",
-            "Caixa 2": "R$ {:,.2f}",
-            "Entradas": "R$ {:,.2f}",
-            "Saídas": "R$ {:,.2f}",
-            "Correções": "R$ {:,.2f}",
-            "Saldo Esperado": "R$ {:,.2f}",
-            "Valor Informado": "R$ {:,.2f}",
-            "Diferença": "R$ {:,.2f}",
+            "Inter": "R$ {:,.2f}", "Bradesco": "R$ {:,.2f}", "InfinitePay": "R$ {:,.2f}", "Outros Bancos": "R$ {:,.2f}",
+            "Caixa": "R$ {:,.2f}", "Caixa 2": "R$ {:,.2f}", "Entradas": "R$ {:,.2f}", "Saídas": "R$ {:,.2f}",
+            "Correções": "R$ {:,.2f}", "Saldo Esperado": "R$ {:,.2f}", "Valor Informado": "R$ {:,.2f}", "Diferença": "R$ {:,.2f}"
         }), use_container_width=True, hide_index=True)
     else:
         st.info("Nenhum fechamento realizado ainda.")
@@ -993,12 +954,95 @@ elif opcao == "🛠️ Cadastro":
         st.session_state.mostrar_cadastro_meta = True
 
 # === Página: Lançamentos do Dia =====================================================================================
+# === Página: Lançamentos do Dia =====================================================================================
+# === Página: Lançamentos do Dia =====================================================================================
+# === Página: Lançamentos do Dia =====================================================================================
+# === Página: Lançamentos do Dia =====================================================================================
+# === Página: Lançamentos do Dia =====================================================================================
+# === Página: Lançamentos do Dia =====================================================================================
 if st.session_state.get("mostrar_lancamentos_do_dia", False):
     st.markdown("## 📝 Lançamentos do Dia")
-    
-    # Define a data de lançamento para uso nos resumos e nos cadastros
-    data_lancamento = st.date_input("📅 Data do Lançamento", value=date.today(), key="data_lancamento_input")
-    filtro_data = data_lancamento
+
+    # Define a data central do lançamento
+    data_lancamento = st.date_input("📅 Data do Lançamento", value=date.today(), key="data_lancamento")
+    data_lancamento_str = str(data_lancamento)
+
+    # Inicializa o estado do formulário de vendas
+    if "mostrar_form_venda" not in st.session_state:
+        st.session_state.mostrar_form_venda = False
+
+    # Botão para alternar o formulário de vendas
+    if st.button("🟢 Lançar Vendas", use_container_width=True):
+        st.session_state.mostrar_form_venda = not st.session_state.mostrar_form_venda
+
+    # === Formulário de vendas ===
+    if st.session_state.mostrar_form_venda:
+        with st.expander("📋 Lançar Vendas", expanded=True):
+            valor_entrada = st.number_input("Valor", min_value=0.0, step=0.01, key="valor_entrada_simples")
+            forma_pagamento = st.selectbox("Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"], key="forma_pagamento_simples")
+
+            parcelas = 1
+            bandeira = ""
+
+            if forma_pagamento == "CRÉDITO":
+                parcelas = st.selectbox("Parcelas", list(range(1, 13)), key="parcelas_simples")
+                bandeira = st.selectbox("Bandeira do Cartão (Crédito)", ["VISA", "MASTERCARD", "ELO", "AMEX", "DINERS CLUBE"], key="bandeira_credito_simples")
+            elif forma_pagamento == "DÉBITO":
+                bandeira = st.selectbox("Bandeira do Cartão (Débito)", ["VISA", "MASTERCARD", "ELO"], key="bandeira_debito_simples")
+
+            # Frase de confirmação antes de salvar
+            resumo = f"Valor: R$ {valor_entrada:.2f}, Forma: {forma_pagamento}, Parcelas: {parcelas}, Bandeira: {bandeira if bandeira else 'N/A'}"
+            st.info(f"✅ Confirme os dados da venda: → {resumo}")
+            confirmar = st.checkbox("Está tudo certo com os dados acima?", key="confirmar_venda")
+
+            if st.button("Salvar Venda", key="salvar_venda"):
+                if valor_entrada <= 0:
+                    st.warning("⚠️ O valor deve ser maior que zero.")
+                elif not confirmar:
+                    st.warning("⚠️ Confirme os dados antes de salvar.")
+                else:
+                    try:
+                        with sqlite3.connect(caminho_banco) as conn:
+                            usuario = st.session_state.usuario_logado["nome"]
+                            conn.execute("""
+                                INSERT INTO entrada (Data, Valor, Forma_de_Pagamento, Parcelas, Bandeira, Usuario)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            """, (
+                                str(data_lancamento),
+                                float(valor_entrada),
+                                forma_pagamento.upper(),
+                                int(parcelas),
+                                bandeira.upper(),
+                                usuario
+                            ))
+                            conn.commit()
+                        st.success(f"✅ Venda cadastrada com sucesso! → {resumo}")
+
+                        # Fecha o formulário
+                        st.session_state.mostrar_form_venda = False
+
+                        # Força o recarregamento da página para limpar campos
+                        st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Erro ao salvar entrada: {e}")
+
+    # Layout 2x2 com os outros botões
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔴 Lançar Saídas", use_container_width=True):
+            st.session_state.mostrar_form_saida = True
+        if st.button("💰 Lançar Caixa 2", use_container_width=True):
+            st.session_state.mostrar_form_caixa2 = True
+
+    with col2:
+        if st.button("📦 Lançar Mercadorias", use_container_width=True):
+            st.session_state.mostrar_form_mercadoria = True
+        if st.button("🏦 Depositar Dinheiro", use_container_width=True):
+            st.session_state.mostrar_form_deposito = True
+
+
+
 
 
 
