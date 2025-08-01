@@ -714,50 +714,91 @@ if opcao == "💼 Fechamento de Caixa":
         (df_entrada["Data"].dt.date == data_fechamento)
     ]["Valor"].sum() or 0.0
 
-    # Buscar os saldos acumulados de todos os dias anteriores (não apenas o último)
-    with sqlite3.connect(caminho_banco) as conn:
-        df_saldos = pd.read_sql("SELECT * FROM saldos_caixas WHERE data <= ?", conn, params=(data_fechamento_str,))
 
+    # 🧮 Buscar o total acumulado de dias anteriores
+    with sqlite3.connect(caminho_banco) as conn:
+        df_saldos = pd.read_sql("SELECT * FROM saldos_caixas WHERE data < ?", conn, params=(data_fechamento_str,))
     if not df_saldos.empty:
-        soma_caixa_total = df_saldos["caixa_total"].sum()
-        soma_caixa2_total = df_saldos["caixa2_total"].sum()
+        df_saldos["data"] = pd.to_datetime(df_saldos["data"], errors="coerce")
+        ultimo_saldo = df_saldos.sort_values("data").iloc[-1]
+        soma_caixa_total = ultimo_saldo["caixa_total"]
+        soma_caixa2_total = ultimo_saldo["caixa2_total"]
     else:
         soma_caixa_total = 0.0
         soma_caixa2_total = 0.0
 
-        # Atualiza ou insere os dados acumulando corretamente
+        # 🧾 Buscar valores cadastrados no dia
     with sqlite3.connect(caminho_banco) as conn:
-        cursor = conn.execute("SELECT 1 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
-        existe = cursor.fetchone()
+        cursor = conn.execute("SELECT caixa, caixa_2 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
+        resultado = cursor.fetchone()
+        valor_caixa_cadastrado = resultado[0] if resultado else 0.0
+        valor_caixa2_cadastrado = resultado[1] if resultado else 0.0
 
-        if existe:
-            conn.execute("""
-                UPDATE saldos_caixas
-                SET caixa_vendas = ?,
-                    caixa_total = ?,
-                    caixa2_total = ?
-                WHERE data = ?
-            """, (
-                valor_dinheiro,
-                soma_caixa_total,
-                soma_caixa2_total,
-                data_fechamento_str
-            ))
-        else:
-            conn.execute("""
-                INSERT INTO saldos_caixas (
-                    data, caixa_vendas, caixa, caixa_total, caixa_2, caixa2_dia, caixa2_total
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                data_fechamento_str,
-                valor_dinheiro,
-                0.0,
-                soma_caixa_total,
-                0.0,
-                0.0,
-                soma_caixa2_total
-            ))
-        conn.commit()
+    # 💸 Buscar saídas do dia para ajustar saldos
+    df_saida = carregar_tabela("saida")
+    df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
+    df_saida_dia = df_saida[df_saida["Data"].dt.date == data_fechamento]
+
+    saidas_dinheiro_caixa = df_saida_dia[
+        (df_saida_dia["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
+        (df_saida_dia["Origem_Dinheiro"].str.upper() == "CAIXA")
+    ]["Valor"].sum() or 0.0
+
+    saidas_dinheiro_caixa2 = df_saida_dia[
+        (df_saida_dia["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
+        (df_saida_dia["Origem_Dinheiro"].str.upper() == "CAIXA 2")
+    ]["Valor"].sum() or 0.0
+
+    # ✅ Recalcular os valores finais dos caixas (antes de gravar no banco!)
+    valor_caixa = valor_caixa_cadastrado + valor_dinheiro - saidas_dinheiro_caixa
+    valor_caixa2 = valor_caixa2_cadastrado - saidas_dinheiro_caixa2
+
+    # ✅ Agora sim: Atualizar ou inserir no banco com os valores corretos
+    try:
+        with sqlite3.connect(caminho_banco) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
+            resultado = cursor.fetchone()
+
+            caixa_total_dia = soma_caixa_total + valor_caixa
+            caixa2_total_dia = soma_caixa2_total + valor_caixa2
+
+            if resultado:
+                cursor.execute("""
+                    UPDATE saldos_caixas
+                    SET 
+                        caixa_vendas = ?,
+                        caixa = ?,
+                        caixa_2 = ?,
+                        caixa_total = ?,
+                        caixa2_total = ?
+                    WHERE data = ?
+                """, (
+                    valor_dinheiro,
+                    valor_caixa,
+                    valor_caixa2,
+                    caixa_total_dia,
+                    caixa2_total_dia,
+                    data_fechamento_str
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO saldos_caixas (
+                        data, caixa_vendas, caixa, caixa_2, caixa_total, caixa2_dia, caixa2_total
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    data_fechamento_str,
+                    valor_dinheiro,
+                    valor_caixa,
+                    valor_caixa2,
+                    caixa_total_dia,
+                    0.0,  # caixa2_dia
+                    caixa2_total_dia
+                ))
+
+            conn.commit()
+    except Exception as e:
+        st.error(f"❌ Erro ao atualizar saldos_caixas: {e}")
 
 # ✅ Correto: pega os valores de caixa e caixa_2 cadastrados no dia
     with sqlite3.connect(caminho_banco) as conn:
@@ -1220,22 +1261,60 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
                     except Exception as e:
                         st.error(f"Erro ao salvar saída: {e}")
 
-    # ✅ Agora fora do formulário de saída:
+   
+
+
+# === Formulário: Transferir valor do Caixa para Caixa 2 ========================================================
+# === Formulário: Transferir valor do Caixa para Caixa 2 ========================================================
+    if st.button("🔄 Transferir para Caixa 2", use_container_width=True):
+        st.session_state.mostrar_form_transferencia = not st.session_state.get("mostrar_form_transferencia", False)
+
+    if st.session_state.get("mostrar_form_transferencia", False):
+        with st.expander("📤 Transferência para Caixa 2", expanded=True):
+            valor_transferencia = st.number_input("Valor a Transferir", min_value=0.0, step=0.01, key="valor_transferencia_caixa2")
+            confirmar_transferencia = st.checkbox("Confirmo a transferência desse valor do Caixa para o Caixa 2", key="confirmar_transferencia_caixa2")
+
+            if st.button("💾 Realizar Transferência", key="salvar_transferencia_caixa2"):
+                if valor_transferencia <= 0:
+                    st.warning("⚠️ O valor deve ser maior que zero.")
+                elif not confirmar_transferencia:
+                    st.warning("⚠️ Confirme os dados antes de salvar.")
+                else:
+                    try:
+                        with sqlite3.connect(caminho_banco) as conn:
+                            df = pd.read_sql("SELECT * FROM saldos_caixas", conn)
+                            if df.empty:
+                                st.error("⚠️ Nenhum saldo encontrado na tabela saldos_caixas.")
+                            else:
+                                df["data"] = pd.to_datetime(df["data"], errors="coerce")
+                                ultimo = df.sort_values("data").iloc[-1]
+
+                                novo_caixa = float(ultimo["caixa"]) - valor_transferencia
+                                novo_caixa2 = float(ultimo["caixa_2"]) + valor_transferencia
+                                data_hoje = str(date.today())
+
+                                conn.execute("""
+                                    INSERT INTO saldos_caixas (data, caixa, caixa_2)
+                                    VALUES (?, ?, ?)
+                                """, (data_hoje, novo_caixa, novo_caixa2))
+                                conn.commit()
+
+                                st.success("✅ Transferência realizada com sucesso!")
+                                st.session_state.mostrar_form_transferencia = False  # Fecha o formulário
+                                st.rerun()
+
+                    except Exception as e:
+                        st.error(f"❌ Erro ao transferir valor: {e}")
+
+ # ✅ Agora fora do formulário de saída:
     col1, col2 = st.columns(2)
-    with col1:
-        if st.button("💰 Lançar Caixa 2", key="botao_caixa2_saida_col1", use_container_width=True):
-            st.session_state.mostrar_form_caixa2 = True
+    
 
     with col2:
         if st.button("📦 Lançar Mercadorias", key="botao_mercadorias_saida_col2", use_container_width=True):
             st.session_state.mostrar_form_mercadoria = True
         if st.button("🏦 Depositar Dinheiro", key="botao_deposito_saida_col2", use_container_width=True):
             st.session_state.mostrar_form_deposito = True
-
-
-
-
-
 # === Formulário de Saídas ============================================================================================
 
 
