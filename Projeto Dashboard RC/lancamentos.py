@@ -544,6 +544,14 @@ if usuario:
         st.session_state.usuario_logado = None
         st.rerun()
 
+    st.sidebar.markdown("___")  # Linha separadora visual
+    # Botão fixo para lançar vendas, sempre visível no sidebar
+    if st.sidebar.button("🟢 Lançar Vendas", use_container_width=True):
+        st.session_state["opcao"] = "📦 Lançamentos"
+        st.session_state["mostrar_form_venda"] = True
+        st.session_state["mostrar_form_saida"] = False
+        st.rerun()
+
     # Espaçamento e separador
     st.sidebar.markdown("<br>", unsafe_allow_html=True)
     st.sidebar.markdown("---")
@@ -711,13 +719,13 @@ if opcao == "💼 Fechamento de Caixa":
         df_saldos = pd.read_sql("SELECT * FROM saldos_caixas WHERE data <= ?", conn, params=(data_fechamento_str,))
 
     if not df_saldos.empty:
-        soma_caixa_total = (df_saldos["caixa"] + df_saldos["caixa_vendas"]).sum()
-        soma_caixa2_total = (df_saldos["caixa_2"] + df_saldos["caixa2_dia"]).sum()
+        soma_caixa_total = df_saldos["caixa_total"].sum()
+        soma_caixa2_total = df_saldos["caixa2_total"].sum()
     else:
         soma_caixa_total = 0.0
         soma_caixa2_total = 0.0
 
-    # Atualiza ou insere os dados acumulando corretamente
+        # Atualiza ou insere os dados acumulando corretamente
     with sqlite3.connect(caminho_banco) as conn:
         cursor = conn.execute("SELECT 1 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
         existe = cursor.fetchone()
@@ -751,8 +759,31 @@ if opcao == "💼 Fechamento de Caixa":
             ))
         conn.commit()
 
-    valor_caixa = soma_caixa_total
-    valor_caixa2 = soma_caixa2_total
+# ✅ Correto: pega os valores de caixa e caixa_2 cadastrados no dia
+    with sqlite3.connect(caminho_banco) as conn:
+        cursor = conn.execute("SELECT caixa, caixa_2 FROM saldos_caixas WHERE data = ?", (data_fechamento_str,))
+        resultado = cursor.fetchone()
+        valor_caixa_cadastrado = resultado[0] if resultado else 0.0
+        valor_caixa2_cadastrado = resultado[1] if resultado else 0.0
+
+    # 🔄 Ajuste: abate as saídas em dinheiro
+    df_saida = carregar_tabela("saida")
+    df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
+    df_saida_dia = df_saida[df_saida["Data"].dt.date == data_fechamento]
+## Considera apenas saídas em dinheiro separadas por origem
+    saidas_dinheiro_caixa = df_saida_dia[
+        (df_saida_dia["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
+        (df_saida_dia["Origem_Dinheiro"].str.upper() == "CAIXA")
+    ]["Valor"].sum() or 0.0
+
+    saidas_dinheiro_caixa2 = df_saida_dia[
+        (df_saida_dia["Forma_de_Pagamento"].str.upper() == "DINHEIRO") &
+        (df_saida_dia["Origem_Dinheiro"].str.upper() == "CAIXA 2")
+    ]["Valor"].sum() or 0.0
+
+    # Recalcula corretamente os saldos
+    valor_caixa = valor_caixa_cadastrado + valor_dinheiro - saidas_dinheiro_caixa
+    valor_caixa2 = valor_caixa2_cadastrado - saidas_dinheiro_caixa2
 
     # Buscar os saldos reais dos bancos (corrigido para evitar erro de desempacotamento)
     with sqlite3.connect(caminho_banco) as conn:
@@ -769,6 +800,26 @@ if opcao == "💼 Fechamento de Caixa":
         saldo_cad_banco_2 = resultado_bancos[1] if resultado_bancos and len(resultado_bancos) > 1 else 0.0
         saldo_cad_banco_3 = resultado_bancos[2] if resultado_bancos and len(resultado_bancos) > 2 else 0.0
         saldo_cad_banco_4 = resultado_bancos[3] if resultado_bancos and len(resultado_bancos) > 3 else 0.0
+
+    # Abatimento de saídas em PIX e DÉBITO dos bancos correspondentes
+        saidas_pix = df_saida_dia[df_saida_dia["Forma_de_Pagamento"].str.upper() == "PIX"]
+        saidas_debito = df_saida_dia[df_saida_dia["Forma_de_Pagamento"].str.upper() == "DÉBITO"]
+
+        def saida_por_banco(df, banco_nome):
+            return df[df["Banco_Saida"].str.upper() == banco_nome.upper()]["Valor"].sum() or 0.0
+
+        # Abate por banco
+        saldo_cad_banco_1 -= saida_por_banco(saidas_pix, "BANCO 1")
+        saldo_cad_banco_1 -= saida_por_banco(saidas_debito, "BANCO 1")
+
+        saldo_cad_banco_2 -= saida_por_banco(saidas_pix, "BANCO 2")
+        saldo_cad_banco_2 -= saida_por_banco(saidas_debito, "BANCO 2")
+
+        saldo_cad_banco_3 -= saida_por_banco(saidas_pix, "BANCO 3")
+        saldo_cad_banco_3 -= saida_por_banco(saidas_debito, "BANCO 3")
+
+        saldo_cad_banco_4 -= saida_por_banco(saidas_pix, "BANCO 4")
+        saldo_cad_banco_4 -= saida_por_banco(saidas_debito, "BANCO 4")
 
     def calcular_valor_liquido_cartao(df_entrada, data_base):
         cal = BrazilDistritoFederal()
@@ -818,12 +869,22 @@ if opcao == "💼 Fechamento de Caixa":
     ])
 
     # Saídas e correções
+    # === Cálculo do total de saídas e filtragem por forma de pagamento ===
     df_saida = carregar_tabela("saida")
     df_saida["Data"] = pd.to_datetime(df_saida["Data"], errors="coerce")
-    total_saidas = df_saida[df_saida["Data"].dt.date == data_fechamento]["Valor"].sum()
-    with sqlite3.connect(caminho_banco) as conn:
-        cursor = conn.execute("SELECT SUM(valor) FROM correcao_caixa WHERE data = ?", (data_fechamento_str,))
-        total_correcao = cursor.fetchone()[0] or 0.0
+    df_saida_dia = df_saida[df_saida["Data"].dt.date == data_fechamento]
+
+    # Total geral de saídas do dia
+    total_saidas = df_saida_dia["Valor"].sum()
+
+    # Total de saídas em dinheiro do dia
+    total_saida_dinheiro = df_saida_dia[df_saida_dia["Forma_de_Pagamento"].str.upper() == "DINHEIRO"]["Valor"].sum() or 0.0
+
+    # === Correções manuais do caixa ===
+    df_correcao = carregar_tabela("correcao_caixa")
+    df_correcao["data"] = pd.to_datetime(df_correcao["data"], errors="coerce")
+    df_correcao_dia = df_correcao[df_correcao["data"].dt.date == data_fechamento]
+    total_correcao = df_correcao_dia["valor"].sum() if not df_correcao_dia.empty else 0.0
 
     # Saldo total
     saldo_total = valor_caixa + valor_caixa2 + valor_banco_1 + saldo_cad_banco_2 + saldo_cad_banco_3 + saldo_cad_banco_4 + total_correcao
@@ -834,6 +895,7 @@ if opcao == "💼 Fechamento de Caixa":
         ("Saídas", f"R$ {total_saidas:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
         ("Correções", f"R$ {total_correcao:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     ])
+
 
     bloco_destaque_2("💵 Saldo em Caixa",
         "Caixa", f"R$ {valor_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
@@ -967,15 +1029,17 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
     data_lancamento = st.date_input("📅 Data do Lançamento", value=date.today(), key="data_lancamento")
     data_lancamento_str = str(data_lancamento)
 
-    # Inicializa o estado do formulário de vendas
+    # Inicializa os estados dos formulários
     if "mostrar_form_venda" not in st.session_state:
         st.session_state.mostrar_form_venda = False
+    if "mostrar_form_saida" not in st.session_state:
+        st.session_state.mostrar_form_saida = False
 
     # Botão para alternar o formulário de vendas
     if st.button("🟢 Lançar Vendas", use_container_width=True):
         st.session_state.mostrar_form_venda = not st.session_state.mostrar_form_venda
 
-    # === Formulário de vendas ===
+    # === Formulário de vendas ================================================================================================
     if st.session_state.mostrar_form_venda:
         with st.expander("📋 Lançar Vendas", expanded=True):
             valor_entrada = st.number_input("Valor", min_value=0.0, step=0.01, key="valor_entrada_simples")
@@ -1024,24 +1088,155 @@ if st.session_state.get("mostrar_lancamentos_do_dia", False):
                         # Força o recarregamento da página para limpar campos
                         st.rerun()
 
+
                     except Exception as e:
                         st.error(f"Erro ao salvar entrada: {e}")
 
-    # Layout 2x2 com os outros botões
+    # Botão para alternar o formulário de saída
+    if st.button("🔴 Lançar Saídas", use_container_width=True):
+        st.session_state.mostrar_form_saida = not st.session_state.mostrar_form_saida
+
+# === Formulário de saída ================================================================================================
+# === Formulário de saída ================================================================================================
+# === Formulário de saída ================================================================================================
+# === Formulário de saída ================================================================================================
+    if st.session_state.mostrar_form_saida:
+        with st.expander("📤 Lançar Saída", expanded=True):
+            valor_saida = st.number_input("Valor da Saída", min_value=0.0, step=0.01, key="valor_saida")
+            forma_pagamento_saida = st.selectbox("Forma de Pagamento", ["DINHEIRO", "PIX", "DÉBITO", "CRÉDITO"], key="forma_pagamento_saida")
+
+            parcelas_saida = 1
+            cartao_credito = ""
+            banco_saida = ""
+            origem_dinheiro = ""
+
+            if forma_pagamento_saida == "CRÉDITO":
+                parcelas_saida = st.selectbox("Parcelas", list(range(1, 13)), key="parcelas_saida")
+                with sqlite3.connect(caminho_banco) as conn:
+                    df_cartoes = pd.read_sql("SELECT * FROM cartoes_credito", conn)
+                if not df_cartoes.empty:
+                    coluna_cartao = "nome" if "nome" in df_cartoes.columns else df_cartoes.columns[0]
+                    cartao_credito = st.selectbox("Cartão de Crédito", df_cartoes[coluna_cartao].tolist(), key="cartao_credito")
+                else:
+                    st.warning("⚠️ Nenhum cartão de crédito cadastrado.")
+                    st.stop()
+
+            elif forma_pagamento_saida == "DINHEIRO":
+                origem_dinheiro = st.selectbox("Origem do Dinheiro", ["Caixa", "Caixa 2"], key="origem_dinheiro")
+
+            elif forma_pagamento_saida in ["PIX", "DÉBITO"]:
+                nomes_bancos = {
+                    "Banco 1": "Inter",
+                    "Banco 2": "Bradesco",
+                    "Banco 3": "InfinitePay",
+                    "Banco 4": "Outros Bancos"
+                }
+                nomes_visuais = list(nomes_bancos.values())
+                banco_visual = st.selectbox("Banco da Saída", nomes_visuais, key="banco_saida")
+                banco_saida = next((b for b, nome in nomes_bancos.items() if nome == banco_visual), "")
+
+            categoria = st.selectbox("Categoria", ["Contas Fixas", "Contas"], key="categoria_saida")
+            subcategorias_dict = {
+                "Contas Fixas": [
+                    "Água", "Luz", "Contabilidade", "Presence", "Crédito Celular", "Microsoft 365",
+                    "Chat GPT", "Simples Nacional", "Consignado", "FGI Bradesco", "Pro Labore", "DARF Pro Labore",
+                    "Comissão", "Salário", "FGTS", "Vale Transporte", "Fundo de Promoção", "Aluguel Maquineta"
+                ],
+                "Contas": [
+                    "Manutenção/Limpeza", "Marketing", "Pgto Cartão de Crédito", "Outros"
+                ]
+            }
+            subcategoria = st.selectbox("Subcategoria", subcategorias_dict.get(categoria, []), key="subcategoria_saida")
+            descricao = st.text_input("Descrição (opcional)", key="descricao_saida")
+
+            resumo_saida = f"Valor: R$ {valor_saida:.2f}, Forma: {forma_pagamento_saida}, Categoria: {categoria}, Subcategoria: {subcategoria}, Descrição: {descricao if descricao else 'N/A'}"
+            st.info(f"✅ Confirme os dados da saída: → {resumo_saida}")
+            confirmar_saida = st.checkbox("Está tudo certo com os dados acima?", key="confirmar_saida")
+
+            if st.button("Salvar Saída", key="salvar_saida"):
+                if valor_saida <= 0:
+                    st.warning("⚠️ O valor deve ser maior que zero.")
+                elif not confirmar_saida:
+                    st.warning("⚠️ Confirme os dados antes de salvar.")
+                else:
+                    try:
+                        with sqlite3.connect(caminho_banco) as conn:
+                            usuario = st.session_state.usuario_logado["nome"]
+                            if forma_pagamento_saida == "CRÉDITO":
+                                df_cartao = df_cartoes[df_cartoes[coluna_cartao] == cartao_credito].iloc[0]
+                                fechamento = int(df_cartao["fechamento"])
+                                vencimento = int(df_cartao["vencimento"])
+                                data_compra = pd.to_datetime(data_lancamento)
+                                dia_compra = data_compra.day
+                                data_parcela = data_compra + pd.DateOffset(months=1) if dia_compra > fechamento else data_compra
+                                valor_parcela = round(valor_saida / parcelas_saida, 2)
+
+                                for parcela in range(1, parcelas_saida + 1):
+                                    vencimento_parcela = data_parcela.replace(day=vencimento) + pd.DateOffset(months=parcela - 1)
+                                    conn.execute("""
+                                        INSERT INTO fatura_cartao (data, vencimento, cartao, parcela, total_parcelas, valor, categoria, sub_categoria, descricao, usuario)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, (
+                                        str(data_compra.date()),
+                                        str(vencimento_parcela.date()),
+                                        cartao_credito,
+                                        parcela,
+                                        parcelas_saida,
+                                        valor_parcela,
+                                        categoria,
+                                        subcategoria,
+                                        descricao,
+                                        usuario
+                                    ))
+                            else:
+                                conn.execute("""
+                                    INSERT INTO saida (Data, Categoria, Sub_Categoria, Descricao, Forma_de_Pagamento, Parcelas, Valor, Usuario, Origem_Dinheiro, Banco_Saida)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    str(data_lancamento),
+                                    categoria,
+                                    subcategoria,
+                                    descricao,
+                                    forma_pagamento_saida.upper(),
+                                    parcelas_saida,
+                                    float(valor_saida),
+                                    usuario,
+                                    origem_dinheiro,
+                                    banco_saida
+                                ))
+
+                                if forma_pagamento_saida.upper() == "DINHEIRO":
+                                    campo = "caixa_total" if origem_dinheiro == "Caixa" else "caixa2_total"
+                                    conn.execute(f"""
+                                        UPDATE saldos_caixas
+                                        SET {campo} = COALESCE({campo}, 0) - ?
+                                        WHERE data = ?
+                                    """, (valor_saida, str(data_lancamento)))
+
+                        conn.commit()
+                        st.success(f"✅ Saída registrada com sucesso! → {resumo_saida}")
+                        st.session_state.mostrar_form_saida = False
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao salvar saída: {e}")
+
+    # ✅ Agora fora do formulário de saída:
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔴 Lançar Saídas", use_container_width=True):
-            st.session_state.mostrar_form_saida = True
-        if st.button("💰 Lançar Caixa 2", use_container_width=True):
+        if st.button("💰 Lançar Caixa 2", key="botao_caixa2_saida_col1", use_container_width=True):
             st.session_state.mostrar_form_caixa2 = True
 
     with col2:
-        if st.button("📦 Lançar Mercadorias", use_container_width=True):
+        if st.button("📦 Lançar Mercadorias", key="botao_mercadorias_saida_col2", use_container_width=True):
             st.session_state.mostrar_form_mercadoria = True
-        if st.button("🏦 Depositar Dinheiro", use_container_width=True):
+        if st.button("🏦 Depositar Dinheiro", key="botao_deposito_saida_col2", use_container_width=True):
             st.session_state.mostrar_form_deposito = True
 
 
+
+
+
+# === Formulário de Saídas ============================================================================================
 
 
 
@@ -1617,12 +1812,14 @@ if st.session_state.get("mostrar_correcao_caixa", False):
         st.error(f"Erro ao carregar correções: {e}")
 
 # === Página: Cadastro de Cartões de Crédito =========================================================================
+# === Página: Cadastro de Cartões de Crédito =========================================================================
 if st.session_state.get("mostrar_cadastrar_cartao", False) and st.session_state.get("pagina_atual") == "🛠️ Cadastro":
     st.subheader("📇 Cadastro de Cartões de Crédito")
 
     with st.form("form_cadastrar_cartao_credito"):
         nome_cartao = st.text_input("Nome do Cartão (Ex: Nubank, Inter, Bradesco)")
         fechamento = st.number_input("Dia do Fechamento da Fatura", min_value=1, max_value=31, step=1)
+        vencimento = st.number_input("Dia do Vencimento da Fatura", min_value=1, max_value=31, step=1)
         submitted_cartao = st.form_submit_button("💾 Salvar Cartão")
 
         if submitted_cartao:
@@ -1635,13 +1832,14 @@ if st.session_state.get("mostrar_cadastrar_cartao", False) and st.session_state.
                             CREATE TABLE IF NOT EXISTS cartoes_credito (
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 nome TEXT NOT NULL,
-                                fechamento INTEGER NOT NULL
+                                fechamento INTEGER NOT NULL,
+                                vencimento INTEGER
                             )
                         """)
                         conn.execute("""
-                            INSERT INTO cartoes_credito (nome, fechamento)
-                            VALUES (?, ?)
-                        """, (nome_cartao, fechamento))
+                            INSERT INTO cartoes_credito (nome, fechamento, vencimento)
+                            VALUES (?, ?, ?)
+                        """, (nome_cartao, fechamento, vencimento))
                         conn.commit()
                     st.success("✅ Cartão cadastrado com sucesso!")
                     st.rerun()
@@ -1653,7 +1851,11 @@ if st.session_state.get("mostrar_cadastrar_cartao", False) and st.session_state.
         if cartoes_df.empty:
             st.info("ℹ️ Nenhum cartão cadastrado ainda.")
         else:
-            cartoes_df = cartoes_df.rename(columns={"nome": "Cartão", "fechamento": "Fechamento (dia)"})
+            cartoes_df = cartoes_df.rename(columns={
+                "nome": "Cartão",
+                "fechamento": "Fechamento (dia)",
+                "vencimento": "Vencimento (dia)"
+            })
             st.markdown("### 📋 Cartões de Crédito Cadastrados")
             st.dataframe(cartoes_df, use_container_width=True, hide_index=True)
     except Exception as e:
